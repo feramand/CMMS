@@ -1,2 +1,2 @@
-# CMMS_AI
-Repositorio creado para desarrollo de CMMS AI
+# CMMS
+Repositorio creado para desarrollo de CMMS
