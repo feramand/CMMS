@@ -1,0 +1,37 @@
+# Instalación en el servidor de la empresa: docker compose up -d --build
+# Requiere un archivo .env junto a este (ver .env.example).
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cmms
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env}
+      POSTGRES_DB: cmms
+    volumes:
+      - cmms_datos:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cmms -d cmms"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://cmms:${POSTGRES_PASSWORD}@db:5432/cmms
+      SESSION_SECRET: ${SESSION_SECRET:?Falta SESSION_SECRET en .env}
+      ADMIN_RUT: ${ADMIN_RUT:-}
+      ADMIN_NOMBRE: ${ADMIN_NOMBRE:-}
+      ADMIN_CLAVE: ${ADMIN_CLAVE:-}
+      TZ: America/Santiago
+    ports:
+      # HTTPS lo entrega el proxy inverso de TI delante de este puerto.
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  cmms_datos:
