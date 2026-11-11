@@ -1,6 +1,6 @@
-# CMMS
+# Print Garage
 
-Sistema de gestión de activos y mantenimiento industrial para la imprenta.
+CMMS: sistema de gestión de activos y mantenimiento industrial para la imprenta.
 Aplicación web adaptable (computador y celular) que se instala en un servidor de la empresa.
 
 ## Estado
