@@ -64,6 +64,13 @@
       "when": 1794505961334,
       "tag": "0008_ficha_de_tareas",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794506441386,
+      "tag": "0009_downtime_y_rama_de_cartillas",
+      "breakpoints": true
     }
   ]
 }

@@ -20,12 +20,14 @@ export default async function Preventivo({ searchParams }: { searchParams: Promi
     db.select().from(especialidades).where(eq(especialidades.activa, true)).orderBy(asc(especialidades.nombre)),
     porcentajesGenerales(db),
   ]);
-  const liberadas = lista.filter((p) => p.activa && p.ciclo?.estado === "LIBERADA");
-  const programadas = lista.filter((p) => p.activa && p.ciclo?.estado === "PROGRAMADA");
+  const incluidas = lista.filter((p) => p.activa && p.incluidaEn);
+  const liberadas = lista.filter((p) => p.activa && !p.incluidaEn && p.ciclo?.estado === "LIBERADA");
+  const programadas = lista.filter((p) => p.activa && !p.incluidaEn && p.ciclo?.estado === "PROGRAMADA");
   const resto = lista.filter((p) => !p.activa || !p.ciclo);
   const grupos = [
     { titulo: "Liberadas, pendientes de ejecutar", pautas: liberadas, vacio: "No hay pautas liberadas." },
     { titulo: "Programadas", pautas: programadas, vacio: "No hay pautas programadas." },
+    { titulo: "Incluidas en una cartilla mayor ya liberada", pautas: incluidas, vacio: "" },
     { titulo: "Inactivas", pautas: resto, vacio: "" },
   ];
   return (
@@ -122,7 +124,12 @@ export default async function Preventivo({ searchParams }: { searchParams: Promi
                         </Link>
                         <ChipPauta p={p} />
                       </div>
-                      {p.ciclo && p.resumen && p.activa && (
+                      {p.incluidaEn && (
+                        <Link href={`/pauta/${p.incluidaEn.cicloId}`} className="text-marca underline">
+                          Sus tareas se ejecutan dentro de {p.incluidaEn.nombre}
+                        </Link>
+                      )}
+                      {p.ciclo && p.resumen && p.activa && !p.incluidaEn && (
                         <>
                           <BarraAvance avance={p.resumen.avance} liberada={p.ciclo.estado === "LIBERADA"} />
                           <span className="text-sm text-slate-700">

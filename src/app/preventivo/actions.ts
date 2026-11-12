@@ -52,6 +52,7 @@ export async function accionActualizarPauta(formData: FormData) {
       pctLiberacion: numero(formData.get("pctLiberacion")),
       pctLimite: numero(formData.get("pctLimite")),
       activa: formData.get("activa") === "si",
+      incluyeInferiores: formData.get("incluyeInferiores") !== "no",
     }),
   );
 }

@@ -250,6 +250,8 @@ export const solicitudes = pgTable("solicitudes", {
   idDetencionMetrics: text("id_detencion_metrics").unique(),
   // Hora en que se detuvo la máquina (viene de Metrics); distinta de la creación de la solicitud.
   detenidaEn: timestamp("detenida_en", { withTimezone: true }),
+  // ¿La falla tiene la máquina detenida? Solo esas solicitudes cuentan como downtime.
+  maquinaDetenida: boolean("maquina_detenida").notNull().default(true),
   creadaEn: timestamp("creada_en", { withTimezone: true }).notNull().defaultNow(),
   creadaPor: integer("creada_por").references(() => usuarios.id),
   comentario: text("comentario"),
@@ -402,6 +404,8 @@ export const pautas = pgTable("pautas", {
   // Porcentajes propios de la pauta; null = los generales de Configuración.
   // Frecuencia teórica de la cartilla (quincenal, semestral…). Solo de referencia para quien planifica.
   frecuencia: text("frecuencia"),
+  // Al liberarse, esta cartilla incluye las tareas de las cartillas de menor intervalo de la máquina.
+  incluyeInferiores: boolean("incluye_inferiores").notNull().default(true),
   pctLiberacion: integer("pct_liberacion"),
   pctLimite: integer("pct_limite"),
   activa: boolean("activa").notNull().default(true),
@@ -463,6 +467,8 @@ export const ciclosPauta = pgTable("ciclos_pauta", {
   ejecutadoPor: integer("ejecutado_por").references(() => usuarios.id),
   girosReales: bigint("giros_reales", { mode: "number" }),
   observaciones: text("observaciones"),
+  // Ciclo de una cartilla mayor, ya liberada, que incluye a esta: mientras dure, esta no se ejecuta por separado.
+  incluidoEnCicloId: integer("incluido_en_ciclo_id").references((): AnyPgColumn => ciclosPauta.id, { onDelete: "set null" }),
 });
 
 export const estadoActividadEnum = pgEnum("estado_actividad", ["PENDIENTE", "HECHA", "NO_REALIZADA"]);
@@ -487,6 +493,8 @@ export const actividadesCiclo = pgTable("actividades_ciclo", {
   detencion: text("detencion"),
   insumos: text("insumos"),
   minutos: integer("minutos"),
+  // Nombre de la cartilla menor de la que viene la tarea; null = es de esta cartilla.
+  pautaOrigen: text("pauta_origen"),
   // Por qué no se realizó: EN_PRODUCCION, SIN_TECNICO, OTRO_TRABAJO u OTRO.
   motivo: text("motivo"),
   // Grupo que la hace, ya resuelto al liberar: operadores, una especialidad, o ambos.

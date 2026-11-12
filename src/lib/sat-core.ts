@@ -52,6 +52,8 @@ export type DatosSolicitud = {
   activoId: number;
   categoria: Categoria;
   comentario?: string | null;
+  /** ¿La falla tiene la máquina detenida? Si no se indica, se asume que sí. */
+  maquinaDetenida?: boolean;
 };
 
 /**
@@ -133,6 +135,7 @@ export async function registrarSolicitud(
         comentario,
         idDetencionMetrics: datos.idDetencionMetrics ?? null,
         detenidaEn: datos.detenidaEn ?? null,
+        maquinaDetenida: datos.maquinaDetenida ?? true,
       })
       .returning({ id: solicitudes.id });
 

@@ -57,3 +57,15 @@ export function partesEnChile(fecha: Date): { fecha: string; diaSemana: number; 
     minutos: Number(v("hour")) * 60 + Number(v("minute")),
   };
 }
+
+/** Instante en que empieza un día (AAAA-MM-DD) en la hora de Chile, con o sin horario de verano. */
+export function inicioDelDiaEnChile(fecha: string): Date {
+  const [a, m, d] = fecha.split("-").map(Number);
+  // Chile está entre 3 y 5 horas detrás de UTC: se prueba cada posibilidad.
+  for (const horas of [3, 4, 5]) {
+    const candidato = new Date(Date.UTC(a, m - 1, d, horas));
+    const p = partesEnChile(candidato);
+    if (p.fecha === fecha && p.minutos === 0) return candidato;
+  }
+  return new Date(Date.UTC(a, m - 1, d, 4));
+}

@@ -78,11 +78,30 @@ export async function listarPautas(filtro?: SQL) {
     .from(ciclosPauta)
     .leftJoin(usuarios, eq(usuarios.id, ciclosPauta.responsableId))
     .where(and(inArray(ciclosPauta.pautaId, lista.map((p) => p.id)), inArray(ciclosPauta.estado, ["PROGRAMADA", "LIBERADA"])));
+  // Con un filtro puede faltar la cartilla mayor: se trae aparte para poder nombrarla.
+  const faltantes = abiertos
+    .map((a) => a.ciclo.incluidoEnCicloId)
+    .filter((id): id is number => id !== null && !abiertos.some((a) => a.ciclo.id === id));
+  const mayores = faltantes.length
+    ? await db
+        .select({ cicloId: ciclosPauta.id, estado: ciclosPauta.estado, nombre: pautas.nombre })
+        .from(ciclosPauta)
+        .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+        .where(inArray(ciclosPauta.id, faltantes))
+    : [];
   const hoy = partesEnChile(new Date()).fecha;
   return lista.map((p) => {
     const fila = abiertos.find((a) => a.ciclo.pautaId === p.id);
     const ciclo: CicloAbierto | null = fila ? { ...fila.ciclo, responsable: fila.responsable } : null;
-    return { ...p, ciclo, resumen: ciclo ? resumenCiclo(p.tipo, ciclo, p.giros, hoy, p.unidad) : null };
+    // Cartilla mayor, ya liberada, que incluye a esta.
+    const mayor = ciclo?.incluidoEnCicloId ? abiertos.find((a) => a.ciclo.id === ciclo.incluidoEnCicloId && a.ciclo.estado === "LIBERADA") : undefined;
+    const aparte = ciclo?.incluidoEnCicloId ? mayores.find((m) => m.cicloId === ciclo.incluidoEnCicloId && m.estado === "LIBERADA") : undefined;
+    const incluidaEn = mayor
+      ? { cicloId: mayor.ciclo.id, nombre: lista.find((x) => x.id === mayor.ciclo.pautaId)?.nombre ?? "otra cartilla" }
+      : aparte
+        ? { cicloId: aparte.cicloId, nombre: aparte.nombre }
+        : null;
+    return { ...p, ciclo, incluidaEn, resumen: ciclo ? resumenCiclo(p.tipo, ciclo, p.giros, hoy, p.unidad) : null };
   });
 }
 
@@ -93,8 +112,9 @@ export type PautaListada = Awaited<ReturnType<typeof listarPautas>>[number];
  * con el avance de su parte. Las más avanzadas en el intervalo van primero.
  */
 export async function pautasLiberadas(grupo: GrupoVista, activoId?: number) {
+  // Una cartilla incluida en otra mayor no se lista: sus tareas están dentro de la mayor.
   const lista = (await listarPautas(and(eq(pautas.activa, true), activoId ? eq(pautas.activoId, activoId) : undefined))).filter(
-    (p) => p.ciclo?.estado === "LIBERADA",
+    (p) => p.ciclo?.estado === "LIBERADA" && !p.incluidaEn,
   );
   if (lista.length === 0) return [];
   const checklist = await db

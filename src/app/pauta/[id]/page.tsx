@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { accionFinalizarPauta, accionMarcarActividad, accionOtDesdePauta } from "@/app/preventivo/actions";
@@ -50,7 +50,7 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
       .select({ cicloId: ciclosPauta.id, nombre: pautas.nombre })
       .from(ciclosPauta)
       .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
-      .where(and(eq(pautas.activoId, pauta.activoId), eq(pautas.activa, true), eq(ciclosPauta.estado, "LIBERADA")))
+      .where(and(eq(pautas.activoId, pauta.activoId), eq(pautas.activa, true), eq(ciclosPauta.estado, "LIBERADA"), isNull(ciclosPauta.incluidoEnCicloId)))
       .orderBy(asc(pautas.nombre)),
     db.select().from(actividadesCiclo).where(eq(actividadesCiclo.cicloId, id)).orderBy(asc(actividadesCiclo.orden), asc(actividadesCiclo.id)),
     db.select({ esp: fichasTecnico.especialidadId }).from(fichasTecnico).where(eq(fichasTecnico.usuarioId, usuario.id)),
@@ -64,13 +64,20 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
       .innerJoin(usuarios, eq(usuarios.id, actividadesCiclo.marcadaPor))
       .where(eq(actividadesCiclo.cicloId, id)),
   ]);
+  const [mayor] = c.incluidoEnCicloId
+    ? await db
+        .select({ cicloId: ciclosPauta.id, nombre: pautas.nombre })
+        .from(ciclosPauta)
+        .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+        .where(and(eq(ciclosPauta.id, c.incluidoEnCicloId), eq(ciclosPauta.estado, "LIBERADA")))
+    : [];
   const resumen = resumenCiclo(pauta.tipo, c, f.giros, partesEnChile(new Date()).fecha, f.unidad);
   const gestiona = usuario.perfil === "ADMINISTRADOR" || usuario.perfil === "JEFE_PLANIFICADOR";
   const esOperador = usuario.perfil === "OPERADOR";
   // Cada grupo marca solo sus actividades: los operadores las de operador, cada técnico las de su especialidad.
   const esMia = (a: (typeof checklist)[number]) => gestiona || (a.operador && esOperador) || (!esOperador && a.especialidadId !== null && a.especialidadId === ficha?.esp);
   const participa = gestiona || checklist.some(esMia) || (checklist.length === 0 && !esOperador && ficha?.esp === pauta.especialidadId);
-  const puede = c.estado === "LIBERADA" && participa;
+  const puede = c.estado === "LIBERADA" && participa && !mayor;
   const hechas = checklist.filter((a) => a.estado !== "PENDIENTE").length;
   const pendientes = checklist.length - hechas;
   const nombreGrupo = (a: (typeof checklist)[number]) => {
@@ -154,6 +161,12 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
             </>
           )}
         </section>
+        {mayor && (
+          <Link href={`/pauta/${mayor.cicloId}`} className={`${tarjeta} border-blue-300 bg-blue-50 text-lg`}>
+            Esta cartilla está incluida en <span className="font-semibold">{mayor.nombre}</span>, que ya está liberada. Sus
+            tareas se marcan desde ahí.
+          </Link>
+        )}
         {c.estado === "PROGRAMADA" && <p className="text-slate-700">Esta pauta todavía no está liberada: se libera en {resumen.liberacion}.</p>}
         {c.estado === "LIBERADA" && !puede && <p className="text-slate-700">No tienes actividades en esta cartilla. Especialidad responsable: {f.especialidad}.</p>}
 
@@ -219,6 +232,7 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Chip tono="azul">{nombreGrupo(a)}</Chip>
+                  {a.pautaOrigen && <Chip tono="gris">{a.pautaOrigen}</Chip>}
                   {a.tipoTarea && <Chip tono="gris">{a.tipoTarea}</Chip>}
                   {a.detencion && <Chip tono={a.detencion === "NO" ? "verde" : "ambar"}>{DETENCION[a.detencion as keyof typeof DETENCION] ?? a.detencion}</Chip>}
                   {a.minutos !== null && <Chip tono="gris">{a.minutos} min</Chip>}

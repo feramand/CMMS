@@ -34,7 +34,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
   const [p] = await listarPautas(eq(pautas.id, id));
   if (!p) notFound();
   const [[propia], actividades, historial, listaEsp, generales] = await Promise.all([
-    db.select({ lib: pautas.pctLiberacion, lim: pautas.pctLimite }).from(pautas).where(eq(pautas.id, id)),
+    db.select({ lib: pautas.pctLiberacion, lim: pautas.pctLimite, incluye: pautas.incluyeInferiores, frecuencia: pautas.frecuencia }).from(pautas).where(eq(pautas.id, id)),
     db.select().from(actividadesPauta).where(and(eq(actividadesPauta.pautaId, id), eq(actividadesPauta.activa, true))).orderBy(asc(actividadesPauta.orden)),
     db
       .select({ ciclo: ciclosPauta, quien: usuarios.nombre })
@@ -84,7 +84,11 @@ export default async function DetallePauta({ params, searchParams }: Props) {
               {p.ciclo.liberadoEn && <Dato etiqueta="Liberada el">{fechaHora(p.ciclo.liberadoEn)}</Dato>}
               {p.ciclo.responsable && <Dato etiqueta="La ejecuta">{p.ciclo.responsable}</Dato>}
             </div>
-            {p.ciclo.estado === "PROGRAMADA" && p.activa ? (
+            {p.incluidaEn ? (
+              <Link href={`/pauta/${p.incluidaEn.cicloId}`} className="text-marca underline">
+                Sus tareas se ejecutan dentro de {p.incluidaEn.nombre}, que ya está liberada.
+              </Link>
+            ) : p.ciclo.estado === "PROGRAMADA" && p.activa ? (
               <form action={accionLiberar}>
                 <input type="hidden" name="cicloId" value={p.ciclo.id} />
                 <input type="hidden" name="pautaId" value={id} />
@@ -192,6 +196,13 @@ export default async function DetallePauta({ params, searchParams }: Props) {
             <label className="flex flex-col gap-1 text-sm font-semibold">
               Incumplida propia (%)
               <input name="pctLimite" inputMode="numeric" defaultValue={propia?.lim ?? ""} placeholder={`General: ${generales.limite}`} className={campo} />
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-semibold sm:col-span-2">
+              Cartillas de menor intervalo de esta máquina
+              <select name="incluyeInferiores" defaultValue={propia?.incluye ? "si" : "no"} className={campo}>
+                <option value="si">Incluirlas: al liberarse, esta cartilla trae también sus tareas</option>
+                <option value="no">No incluirlas: cada cartilla se ejecuta por separado</option>
+              </select>
             </label>
             <p className="text-sm text-slate-600 sm:col-span-2">
               Deja los dos porcentajes vacíos para usar los generales. Si cambias el intervalo o los porcentajes, el

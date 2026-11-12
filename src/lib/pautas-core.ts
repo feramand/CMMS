@@ -1,5 +1,5 @@
 // Mantenimiento preventivo: pautas por tiempo y por giros, sus ciclos y las lecturas de contador.
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
 import type { DB } from "@/db";
 import {
   actividadesCiclo,
@@ -174,21 +174,52 @@ async function tecnicosDe(ex: Ejecutor, especialidadId: number): Promise<number[
 }
 
 /** Pasa un ciclo a Liberada: copia el checklist vigente y avisa a los técnicos de la especialidad. */
+/** Cartillas activas de la misma máquina, del mismo tipo y de menor intervalo: la «rama inferior». */
+async function inferioresDe(ex: Ejecutor, pauta: Pauta): Promise<Pauta[]> {
+  if (!pauta.incluyeInferiores) return [];
+  return ex
+    .select()
+    .from(pautas)
+    .where(and(eq(pautas.activoId, pauta.activoId), eq(pautas.tipo, pauta.tipo), eq(pautas.activa, true), lt(pautas.intervalo, pauta.intervalo)))
+    .orderBy(desc(pautas.intervalo), asc(pautas.id));
+}
+
+/**
+ * Pasa un ciclo a Liberada: arma su checklist y avisa a los técnicos. Una cartilla mayor incluye
+ * las tareas de las cartillas menores de la máquina (2.000.000 incluye 500.000 y 100.000); mientras
+ * esté liberada, las menores quedan dentro de ella y no se ejecutan por separado.
+ */
 async function liberar(ex: Ejecutor, pauta: Pauta, maquina: string, cicloId: number, ahora: Date, por: number | null) {
   await ex
     .update(ciclosPauta)
     .set({ estado: "LIBERADA", liberadoEn: ahora, liberadoPor: por })
     .where(eq(ciclosPauta.id, cicloId));
-  const lista = await ex
+  const inferiores = await inferioresDe(ex, pauta);
+  const todas = [pauta, ...inferiores];
+  const actividades = await ex
     .select()
     .from(actividadesPauta)
-    .where(and(eq(actividadesPauta.pautaId, pauta.id), eq(actividadesPauta.activa, true)))
+    .where(and(inArray(actividadesPauta.pautaId, todas.map((p) => p.id)), eq(actividadesPauta.activa, true)))
     .orderBy(asc(actividadesPauta.orden), asc(actividadesPauta.id));
+  // Primero las tareas propias, después las de cada cartilla menor. Una tarea con el mismo
+  // código en dos cartillas (como las «AB») entra una sola vez.
+  const vistos = new Set<string>();
+  const lista = todas.flatMap((dueña) =>
+    actividades
+      .filter((a) => a.pautaId === dueña.id)
+      .filter((a) => {
+        if (!a.codigo) return true;
+        if (vistos.has(a.codigo)) return false;
+        vistos.add(a.codigo);
+        return true;
+      })
+      .map((a) => ({ ...a, dueña })),
+  );
   if (lista.length) {
     await ex.insert(actividadesCiclo).values(
-      lista.map((a) => ({
+      lista.map((a, i) => ({
         cicloId,
-        orden: a.orden,
+        orden: i + 1,
         descripcion: a.descripcion,
         codigo: a.codigo,
         zona: a.zona,
@@ -198,10 +229,17 @@ async function liberar(ex: Ejecutor, pauta: Pauta, maquina: string, cicloId: num
         detencion: a.detencion,
         insumos: a.insumos,
         minutos: a.minutos,
+        pautaOrigen: a.dueña.id === pauta.id ? null : a.dueña.nombre,
         operador: a.operador,
-        especialidadId: a.operador ? a.especialidadId : (a.especialidadId ?? pauta.especialidadId),
+        especialidadId: a.operador ? a.especialidadId : (a.especialidadId ?? a.dueña.especialidadId),
       })),
     );
+  }
+  if (inferiores.length) {
+    await ex
+      .update(ciclosPauta)
+      .set({ incluidoEnCicloId: cicloId })
+      .where(and(inArray(ciclosPauta.pautaId, inferiores.map((p) => p.id)), inArray(ciclosPauta.estado, ["PROGRAMADA", "LIBERADA"])));
   }
   // Avisa a los técnicos de cada especialidad con actividades. A los operadores no se les
   // envía aviso: ven la cartilla en su inicio y al escanear el QR de la máquina.
@@ -243,6 +281,17 @@ async function evaluarPauta(ex: Ejecutor, pautaId: number, generales: Porcentaje
       .from(ciclosPauta)
       .where(and(eq(ciclosPauta.pautaId, pautaId), inArray(ciclosPauta.estado, ["PROGRAMADA", "LIBERADA"])));
     if (!ciclo) return cambios;
+    if (ciclo.incluidoEnCicloId) {
+      // Dentro de una cartilla mayor liberada no se libera ni se incumple por separado.
+      const [mayor] = await ex
+        .select({ estado: ciclosPauta.estado, activa: pautas.activa })
+        .from(ciclosPauta)
+        .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+        .where(eq(ciclosPauta.id, ciclo.incluidoEnCicloId));
+      if (mayor?.estado === "LIBERADA" && mayor.activa) return cambios;
+      // La cartilla mayor se cerró o se desactivó: esta vuelve a correr sola.
+      await ex.update(ciclosPauta).set({ incluidoEnCicloId: null }).where(eq(ciclosPauta.id, ciclo.id));
+    }
     let enLiberacion: boolean, enObjetivo: boolean, vencida: boolean;
     if (pauta.tipo === "GIROS") {
       if (fila.giros === null) return cambios;
@@ -462,7 +511,11 @@ export async function actualizarPauta(
   db: DB,
   actor: UsuarioSesion,
   id: number,
-  datos: Pick<DatosPauta, "nombre" | "intervalo" | "especialidadId" | "pctLiberacion" | "pctLimite"> & { activa: boolean },
+  datos: Pick<DatosPauta, "nombre" | "intervalo" | "especialidadId" | "pctLiberacion" | "pctLimite"> & {
+    activa: boolean;
+    /** Si se omite, no cambia. */
+    incluyeInferiores?: boolean;
+  },
   ahora = new Date(),
 ): Promise<void> {
   exigirGestion(actor);
@@ -474,7 +527,13 @@ export async function actualizarPauta(
     if (!esp) throw new ErrorDeNegocio("Elige la especialidad.");
     const [nueva] = await tx
       .update(pautas)
-      .set({ ...comunes, intervalo: datos.intervalo, especialidadId: esp.id, activa: datos.activa })
+      .set({
+        ...comunes,
+        intervalo: datos.intervalo,
+        especialidadId: esp.id,
+        activa: datos.activa,
+        incluyeInferiores: datos.incluyeInferiores ?? actual.incluyeInferiores,
+      })
       .where(eq(pautas.id, id))
       .returning();
     const [abierto] = await tx
@@ -574,6 +633,16 @@ async function cicloEjecutable(tx: Ejecutor, actor: UsuarioSesion, cicloId: numb
   if (!fila) throw new ErrorDeNegocio("La pauta no existe.");
   if (fila.ciclo.estado !== "LIBERADA") {
     throw new ErrorDeNegocio(fila.ciclo.estado === "PROGRAMADA" ? "Esta pauta todavía no está liberada." : "Esta pauta ya está cerrada.");
+  }
+  if (fila.ciclo.incluidoEnCicloId) {
+    const [mayor] = await tx
+      .select({ nombre: pautas.nombre, estado: ciclosPauta.estado })
+      .from(ciclosPauta)
+      .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+      .where(eq(ciclosPauta.id, fila.ciclo.incluidoEnCicloId));
+    if (mayor?.estado === "LIBERADA") {
+      throw new ErrorDeNegocio(`Esta cartilla está incluida en «${mayor.nombre}»: se ejecuta desde ahí.`);
+    }
   }
   const grupo = await grupoDe(tx, actor);
   const checklist = await tx.select().from(actividadesCiclo).where(eq(actividadesCiclo.cicloId, cicloId));
@@ -684,7 +753,27 @@ export async function finalizarCiclo(
       .set({ ultimaPreventiva: hoy, ultimoMp: pauta.nombre, ...(pauta.tipo === "GIROS" ? { girosAcumulados: girosReales } : {}) })
       .where(eq(activos.id, pauta.activoId));
     const base = pauta.tipo === "GIROS" ? girosReales! : hoy;
-    await tx.insert(ciclosPauta).values({ pautaId: pauta.id, ...hitosDe(pauta, base, porcentajesDe(pauta, await porcentajesGenerales(tx))) });
+    const generales = await porcentajesGenerales(tx);
+    await tx.insert(ciclosPauta).values({ pautaId: pauta.id, ...hitosDe(pauta, base, porcentajesDe(pauta, generales)) });
+    // Las cartillas menores incluidas quedan ejecutadas con esta y parten de nuevo desde el mismo punto.
+    const incluidos = await tx
+      .select({ ciclo: ciclosPauta, pauta: pautas })
+      .from(ciclosPauta)
+      .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+      .where(and(eq(ciclosPauta.incluidoEnCicloId, cicloId), inArray(ciclosPauta.estado, ["PROGRAMADA", "LIBERADA"])));
+    for (const menor of incluidos) {
+      await tx
+        .update(ciclosPauta)
+        .set({
+          estado: "EJECUTADA",
+          cerradoEn: ahora,
+          ejecutadoPor: actor.id,
+          girosReales,
+          observaciones: `Incluida en «${pauta.nombre}».`,
+        })
+        .where(eq(ciclosPauta.id, menor.ciclo.id));
+      await tx.insert(ciclosPauta).values({ pautaId: menor.pauta.id, ...hitosDe(menor.pauta, base, porcentajesDe(menor.pauta, generales)) });
+    }
     await notificar(
       tx,
       (await idsPorPerfil(tx, "JEFE_PLANIFICADOR")).filter((id) => id !== actor.id),

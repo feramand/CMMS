@@ -74,6 +74,23 @@ export default async function Reportar({ searchParams }: { searchParams: Promise
                 ))}
               </div>
             </fieldset>
+            <fieldset>
+              <legend className="mb-2 text-base font-semibold">3. ¿La máquina está detenida?</legend>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  ["si", "Sí, detenida"],
+                  ["no", "No, sigue funcionando"],
+                ].map(([valor, nombre]) => (
+                  <label
+                    key={valor}
+                    className="flex h-16 cursor-pointer items-center justify-center rounded-xl border border-slate-400 bg-white px-2 text-center text-lg font-semibold has-checked:border-4 has-checked:border-marca has-checked:bg-blue-100"
+                  >
+                    <input type="radio" name="maquinaDetenida" value={valor} defaultChecked={valor === "si"} className="sr-only" />
+                    {nombre}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <label className="flex flex-col gap-1 text-base font-semibold">
               Comentario (opcional)
               <textarea name="comentario" rows={2} className="rounded-lg border border-slate-400 bg-white p-3 text-lg" />

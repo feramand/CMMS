@@ -49,6 +49,7 @@ export async function accionReportar(formData: FormData) {
       activoId: entero(formData.get("activoId")),
       categoria,
       comentario: texto(formData.get("comentario")),
+      maquinaDetenida: formData.get("maquinaDetenida") !== "no",
     });
     await guardarFotos(db, actor, { solicitudId: r.id }, fotos);
     return `/sat/${r.id}${r.duplicada ? "?aviso=duplicada" : ""}`;
