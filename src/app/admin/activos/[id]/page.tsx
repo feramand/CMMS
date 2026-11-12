@@ -75,7 +75,7 @@ export default async function FichaActivo({ params, searchParams }: Props) {
           <h2 className="text-lg font-bold">Ficha técnica</h2>
           <FichaTecnica m={m} tipo={a.tipo} />
           <p className="text-sm text-slate-600">
-            «Última preventiva» y «Último MP» se llenan solos al finalizar una pauta preventiva.
+            «Último MP» (fecha y cartilla) se llena solo al finalizar una pauta preventiva.
           </p>
         </section>
 

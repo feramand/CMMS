@@ -703,7 +703,7 @@ export async function marcarActividad(
 
 /**
  * Finaliza la pauta: exige el checklist completo, guarda quién, cuándo y con cuántos giros,
- * actualiza «Última preventiva» y «Último MP» de la máquina y programa el ciclo siguiente
+ * actualiza «Último MP» (fecha y cartilla) de la máquina y programa el ciclo siguiente
  * con base en el valor real (los giros o la fecha de hoy).
  */
 export async function finalizarCiclo(

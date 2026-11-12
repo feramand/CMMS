@@ -6,7 +6,15 @@ import { Encabezado } from "@/componentes/encabezado";
 import { FichaTecnica } from "@/componentes/ficha-tecnica";
 import { ChipOt, ChipSat, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { activos, fichasTecnico, ordenesTrabajo, plantas, sectores, solicitudes, tiposMaquina } from "@/db/schema";
+import {
+  activos,
+  fichasTecnico,
+  ordenesTrabajo,
+  plantas,
+  sectores,
+  solicitudes,
+  tiposMaquina,
+} from "@/db/schema";
 import { aplanar } from "@/lib/arbol";
 import { nombreCategoria } from "@/lib/categorias";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
@@ -15,37 +23,76 @@ import { exigirSesion } from "@/lib/dal";
 import { puedeEntrarAdmin } from "@/lib/perfiles";
 import { fechaHora } from "@/lib/tiempo";
 
+function Fila({
+  href,
+  className,
+  children,
+}: {
+  href: string | null;
+  className: string;
+  children: React.ReactNode;
+}) {
+  return href ? (
+    <Link href={href} className={className}>
+      {children}
+    </Link>
+  ) : (
+    <div className={className}>{children}</div>
+  );
+}
+
 // Ficha de la máquina a la que lleva su código QR. La ve cualquier persona con sesión;
-// el historial de trabajos no se muestra a los operadores.
-export default async function FichaPorQr({ params }: { params: Promise<{ id: string }> }) {
+// todos ven el historial de trabajos, pero el detalle solo lo abre quien tiene permiso.
+export default async function FichaPorQr({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const usuario = await exigirSesion();
   const id = Number((await params).id);
   if (!Number.isInteger(id)) notFound();
   const [a] = await db
-    .select({ activo: activos, planta: plantas.nombre, tipo: tiposMaquina.nombre })
+    .select({
+      activo: activos,
+      planta: plantas.nombre,
+      tipo: tiposMaquina.nombre,
+    })
     .from(activos)
     .innerJoin(plantas, eq(plantas.id, activos.plantaId))
     .leftJoin(tiposMaquina, eq(tiposMaquina.id, activos.tipoMaquinaId))
     .where(eq(activos.id, id));
   if (!a) notFound();
   const m = a.activo;
-  const veHistorial = usuario.perfil !== "OPERADOR";
-  const puedeReportar = usuario.perfil !== "BODEGUERO" && usuario.perfil !== "ABASTECIMIENTO";
-  const gestiona = usuario.perfil === "ADMINISTRADOR" || usuario.perfil === "JEFE_PLANIFICADOR";
+  const abreSat = usuario.perfil !== "OPERADOR";
+  const abreOt =
+    abreSat &&
+    usuario.perfil !== "BODEGUERO" &&
+    usuario.perfil !== "ABASTECIMIENTO";
+  const puedeReportar =
+    usuario.perfil !== "BODEGUERO" && usuario.perfil !== "ABASTECIMIENTO";
+  const gestiona =
+    usuario.perfil === "ADMINISTRADOR" ||
+    usuario.perfil === "JEFE_PLANIFICADOR";
   const [ficha] =
     usuario.perfil === "TECNICO"
-      ? await db.select({ esp: fichasTecnico.especialidadId }).from(fichasTecnico).where(eq(fichasTecnico.usuarioId, usuario.id))
+      ? await db
+          .select({ esp: fichasTecnico.especialidadId })
+          .from(fichasTecnico)
+          .where(eq(fichasTecnico.usuarioId, usuario.id))
       : [];
   const cartillas =
     usuario.perfil === "OPERADOR"
       ? await pautasLiberadas({ operador: true }, id)
       : ficha
-        ? await pautasLiberadas({ operador: false, especialidadId: ficha.esp }, id)
+        ? await pautasLiberadas(
+            { operador: false, especialidadId: ficha.esp },
+            id,
+          )
         : [];
   const [nodos, sats, ots] = await Promise.all([
     db.select().from(sectores).where(eq(sectores.activoId, id)),
-    veHistorial ? listarSolicitudes(eq(solicitudes.activoId, id), 20) : [],
-    veHistorial ? listarOts(eq(ordenesTrabajo.activoId, id), 20) : [],
+    listarSolicitudes(eq(solicitudes.activoId, id), 20),
+    listarOts(eq(ordenesTrabajo.activoId, id), 20),
   ]);
   return (
     <>
@@ -59,7 +106,10 @@ export default async function FichaPorQr({ params }: { params: Promise<{ id: str
           </p>
         </div>
         {m.estadoOperativo !== "ACTIVO" && (
-          <p role="status" className="rounded-lg bg-amber-100 px-4 py-3 text-lg font-semibold text-amber-900">
+          <p
+            role="status"
+            className="rounded-lg bg-amber-100 px-4 py-3 text-lg font-semibold text-amber-900"
+          >
             {m.estadoOperativo === "DESINSTALADO"
               ? "Equipo desinstalado. Se conserva su ficha y su historial."
               : "Equipo fuera de servicio."}
@@ -74,10 +124,17 @@ export default async function FichaPorQr({ params }: { params: Promise<{ id: str
           </Link>
         )}
         {cartillas.map((p) => (
-          <Link key={p.id} href={`/pauta/${p.ciclo!.id}`} className={`${tarjeta} flex flex-col border-amber-400 bg-amber-50`}>
-            <span className="text-lg font-semibold">Cartilla liberada: {p.nombre}</span>
+          <Link
+            key={p.id}
+            href={`/pauta/${p.ciclo!.id}`}
+            className={`${tarjeta} flex flex-col border-amber-400 bg-amber-50`}
+          >
+            <span className="text-lg font-semibold">
+              Cartilla liberada: {p.nombre}
+            </span>
             <span className="text-slate-700">
-              Tu parte: {p.miParte.hechas} de {p.miParte.total} · límite {p.resumen!.limite}
+              Tu parte: {p.miParte.hechas} de {p.miParte.total} · límite{" "}
+              {p.resumen!.limite}
             </span>
           </Link>
         ))}
@@ -97,41 +154,59 @@ export default async function FichaPorQr({ params }: { params: Promise<{ id: str
           <ArbolLectura nodos={aplanar(nodos.filter((n) => n.activo))} />
         </section>
 
-        {veHistorial && (
-          <>
-            <section className={`${tarjeta} flex flex-col gap-2`}>
-              <h2 className="text-lg font-bold">Últimas solicitudes de atención · {sats.length}</h2>
-              {sats.length === 0 && <p className="text-slate-600">Sin solicitudes.</p>}
-              {sats.map((s) => (
-                <Link key={s.id} href={`/sat/${s.id}`} className="flex flex-col gap-1 border-t border-slate-200 pt-2">
-                  <span className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-semibold">
-                      {fechaHora(s.creadaEn)} · {nombreCategoria(s.origenReal ?? s.categoria)}
-                    </span>
-                    <ChipSat estado={s.estado} />
+        <>
+          <section className={`${tarjeta} flex flex-col gap-2`}>
+            <h2 className="text-lg font-bold">
+              Últimas solicitudes de atención · {sats.length}
+            </h2>
+            {sats.length === 0 && (
+              <p className="text-slate-600">Sin solicitudes.</p>
+            )}
+            {sats.map((s) => (
+              <Fila
+                key={s.id}
+                href={abreSat ? `/sat/${s.id}` : null}
+                className="flex flex-col gap-1 border-t border-slate-200 pt-2"
+              >
+                <span className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold">
+                    {fechaHora(s.creadaEn)} ·{" "}
+                    {nombreCategoria(s.origenReal ?? s.categoria)}
                   </span>
-                  <span className="text-slate-700">
-                    {s.sector ? `${s.sector}: ` : ""}
-                    {s.solucion ?? (s.folioOt ? `Pasó a la OT ${s.folioOt}` : "Sin solución registrada todavía")}
-                    {s.responsable ? ` · ${s.responsable}` : ""}
-                  </span>
-                </Link>
-              ))}
-            </section>
+                  <ChipSat estado={s.estado} />
+                </span>
+                <span className="text-slate-700">
+                  {s.sector ? `${s.sector}: ` : ""}
+                  {s.solucion ??
+                    (s.folioOt
+                      ? `Pasó a la OT ${s.folioOt}`
+                      : "Sin solución registrada todavía")}
+                  {s.responsable ? ` · ${s.responsable}` : ""}
+                </span>
+              </Fila>
+            ))}
+          </section>
 
-            <section className={`${tarjeta} flex flex-col gap-2`}>
-              <h2 className="text-lg font-bold">Últimas órdenes de trabajo · {ots.length}</h2>
-              {ots.length === 0 && <p className="text-slate-600">Sin órdenes de trabajo.</p>}
-              {ots.map((o) => (
-                <Link key={o.id} href={`/ot/${o.id}`} className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2">
-                  <span className="font-semibold">OT {o.folio}</span>
-                  <span className="flex-1 text-slate-700">{o.descripcion}</span>
-                  <ChipOt estado={o.estado} />
-                </Link>
-              ))}
-            </section>
-          </>
-        )}
+          <section className={`${tarjeta} flex flex-col gap-2`}>
+            <h2 className="text-lg font-bold">
+              Últimas órdenes de trabajo · {ots.length}
+            </h2>
+            {ots.length === 0 && (
+              <p className="text-slate-600">Sin órdenes de trabajo.</p>
+            )}
+            {ots.map((o) => (
+              <Fila
+                key={o.id}
+                href={abreOt ? `/ot/${o.id}` : null}
+                className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2"
+              >
+                <span className="font-semibold">OT {o.folio}</span>
+                <span className="flex-1 text-slate-700">{o.descripcion}</span>
+                <ChipOt estado={o.estado} />
+              </Fila>
+            ))}
+          </section>
+        </>
         {!puedeEntrarAdmin(usuario.perfil) && (
           <Link href="/inicio" className="text-center text-marca underline">
             Ir a mi inicio
