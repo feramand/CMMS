@@ -1,0 +1,1 @@
+ALTER TABLE "activos" DROP COLUMN "tipo";

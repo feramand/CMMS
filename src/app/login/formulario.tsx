@@ -3,10 +3,11 @@
 import { useActionState } from "react";
 import { ingresar } from "./actions";
 
-export function FormularioIngreso() {
+export function FormularioIngreso({ volver }: { volver?: string }) {
   const [estado, accion, enviando] = useActionState(ingresar, undefined);
   return (
     <form action={accion} className="flex flex-col gap-4">
+      {volver && <input type="hidden" name="volver" value={volver} />}
       <label className="flex flex-col gap-1 text-base font-medium">
         RUT, usuario de Metrics o correo
         <input

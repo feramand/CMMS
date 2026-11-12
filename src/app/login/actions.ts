@@ -27,7 +27,9 @@ export async function ingresar(
     };
   }
   await crearSesion(resultado.usuario);
-  redirect(rutaInicio(resultado.usuario.perfil));
+  // Solo se acepta volver a la ficha de una máquina (el destino de su código QR).
+  const volver = String(formData.get("volver") ?? "");
+  redirect(/^\/activo\/\d+$/.test(volver) ? volver : rutaInicio(resultado.usuario.perfil));
 }
 
 export async function salir(): Promise<void> {

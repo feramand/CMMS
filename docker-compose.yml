@@ -31,6 +31,7 @@ services:
       ADMIN_RUT: ${ADMIN_RUT:-}
       ADMIN_NOMBRE: ${ADMIN_NOMBRE:-}
       ADMIN_CLAVE: ${ADMIN_CLAVE:-}
+      URL_PUBLICA: ${URL_PUBLICA:-}
       ADJUNTOS_DIR: /datos/adjuntos
       TZ: America/Santiago
     volumes:

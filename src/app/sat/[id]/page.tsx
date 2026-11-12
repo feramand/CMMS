@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, ne, or } from "drizzle-orm";
+import { aplanar } from "@/lib/arbol";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { accionCerrar, accionEscalar, accionTomar } from "@/app/trabajos/actions";
@@ -35,7 +36,7 @@ export default async function DetalleSolicitud({ params, searchParams }: Props) 
   const esResponsable = s.estado === "EN_ATENCION" && s.responsableId === usuario.id;
   const [listaSectores, tecnicos, listaApoyos, repuestos, anteriores] = await Promise.all([
     esResponsable
-      ? db.select().from(sectores).where(eq(sectores.activoId, s.activoId)).orderBy(asc(sectores.nombre))
+      ? db.select().from(sectores).where(and(eq(sectores.activoId, s.activoId), eq(sectores.activo, true)))
       : [],
     esResponsable ? listarTecnicos() : [],
     db
@@ -177,21 +178,21 @@ export default async function DetalleSolicitud({ params, searchParams }: Props) 
               <input type="hidden" name="id" value={s.id} />
               <section className={`${tarjeta} flex flex-col gap-3`}>
                 <label className="flex flex-col gap-1 text-base font-semibold">
-                  1. Sector de la máquina
+                  1. Sistema de la máquina
                   <select name="sectorId" required defaultValue="" className={`${campo} h-14 text-lg`}>
                     <option value="" disabled>
                       Elegir…
                     </option>
-                    {listaSectores.map((x) => (
+                    {aplanar(listaSectores).map((x) => (
                       <option key={x.id} value={x.id}>
-                        {x.nombre}
+                        {x.ruta}
                       </option>
                     ))}
                   </select>
                 </label>
                 {listaSectores.length === 0 && (
                   <p className="text-sm text-amber-800">
-                    Esta máquina no tiene sectores cargados. Pide al jefe o al administrador que los agregue en su ficha.
+                    Esta máquina no tiene sistemas cargados. Pide al jefe o al administrador que los agregue en su ficha.
                   </p>
                 )}
                 <label className="flex flex-col gap-1 text-base font-semibold">

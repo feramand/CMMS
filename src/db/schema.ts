@@ -1,4 +1,5 @@
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   date,
@@ -112,11 +113,27 @@ export const estadoOperativoEnum = pgEnum("estado_operativo", [
   "FUERA_DE_SERVICIO",
 ]);
 
+// Tipos de máquina (prensa offset plana, guillotina frontal…). Cada tipo tiene un árbol de
+// sistemas que sirve de plantilla para las máquinas de ese tipo.
+export const tiposMaquina = pgTable("tipos_maquina", {
+  id: serial("id").primaryKey(),
+  nombre: text("nombre").notNull().unique(),
+});
+
+export const sistemasTipo = pgTable("sistemas_tipo", {
+  id: serial("id").primaryKey(),
+  tipoId: integer("tipo_id")
+    .notNull()
+    .references(() => tiposMaquina.id, { onDelete: "cascade" }),
+  padreId: integer("padre_id").references((): AnyPgColumn => sistemasTipo.id, { onDelete: "cascade" }),
+  nombre: text("nombre").notNull(),
+});
+
 export const activos = pgTable("activos", {
   id: serial("id").primaryKey(),
   codigo: text("codigo").notNull().unique(),
   nombre: text("nombre").notNull(),
-  tipo: text("tipo"),
+  tipoMaquinaId: integer("tipo_maquina_id").references(() => tiposMaquina.id),
   fabricante: text("fabricante"),
   modelo: text("modelo"),
   numeroSerie: text("numero_serie"),
@@ -136,21 +153,23 @@ export const activos = pgTable("activos", {
   codigoMetrics: text("codigo_metrics").unique(),
   girosAcumulados: bigint("giros_acumulados", { mode: "number" }),
   ultimaPreventiva: date("ultima_preventiva"),
+  // Nombre de la última pauta preventiva ejecutada; lo llena el registro de mantención (etapa 2).
+  ultimoMp: text("ultimo_mp"),
   activo: boolean("activo").notNull().default(true),
 });
 
-// Sectores o componentes de cada máquina: alimentan la lista al cerrar una solicitud.
-export const sectores = pgTable(
-  "sectores",
-  {
-    id: serial("id").primaryKey(),
-    activoId: integer("activo_id")
-      .notNull()
-      .references(() => activos.id, { onDelete: "cascade" }),
-    nombre: text("nombre").notNull(),
-  },
-  (t) => [unique().on(t.activoId, t.nombre)],
-);
+// Árbol de sistemas y subsistemas de cada máquina. Nace de la plantilla de su tipo y se
+// puede editar por máquina. Alimenta la lista al cerrar una solicitud.
+// Un sistema con historial no se borra: se desactiva.
+export const sectores = pgTable("sectores", {
+  id: serial("id").primaryKey(),
+  activoId: integer("activo_id")
+    .notNull()
+    .references(() => activos.id, { onDelete: "cascade" }),
+  padreId: integer("padre_id").references((): AnyPgColumn => sectores.id, { onDelete: "cascade" }),
+  nombre: text("nombre").notNull(),
+  activo: boolean("activo").notNull().default(true),
+});
 
 export const categoriaEnum = pgEnum("categoria_falla", [
   "MECANICA",

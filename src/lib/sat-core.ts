@@ -252,7 +252,7 @@ export async function cerrarSolicitud(
     const [sector] = await tx
       .select({ id: sectores.id })
       .from(sectores)
-      .where(and(eq(sectores.id, datos.sectorId), eq(sectores.activoId, s.activoId)));
+      .where(and(eq(sectores.id, datos.sectorId), eq(sectores.activoId, s.activoId), eq(sectores.activo, true)));
     if (!sector) throw new ErrorDeNegocio("Elige el sector de la máquina.");
     let origenReal: Categoria | null = null;
     if (s.categoria === "INDETERMINADA") {

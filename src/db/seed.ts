@@ -26,6 +26,28 @@ async function main() {
     ])
     .onConflictDoNothing();
 
+  // Tipos de máquina de partida. Se pueden crear más y armar la plantilla de sistemas de cada uno.
+  await db
+    .insert(schema.tiposMaquina)
+    .values(
+      [
+        "Prensa Offset Plana",
+        "Prensa Offset Rotativa",
+        "Prensa Digital",
+        "Encuadernadora Perfect Binder",
+        "Encuadernadora Espiral",
+        "Encuadernadora Doble Cero",
+        "Encuadernadora Tapa Dura",
+        "Encuadernadora de Alambre",
+        "Perforadora",
+        "Guillotina Frontal",
+        "Guillotina Trilateral",
+        "Armadora de Tapas",
+        "Embolsadora",
+      ].map((nombre) => ({ nombre })),
+    )
+    .onConflictDoNothing();
+
   await db
     .insert(schema.turnos)
     .values([

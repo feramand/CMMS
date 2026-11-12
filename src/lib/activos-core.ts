@@ -1,7 +1,9 @@
 import { eq } from "drizzle-orm";
 import type { DB } from "@/db";
-import { activos, bitacora, plantas, sectores } from "@/db/schema";
+import { activos, bitacora, plantas, sectores, tiposMaquina } from "@/db/schema";
+import { mismoNombre } from "./arbol";
 import type { UsuarioSesion } from "./auth-core";
+import { copiarPlantilla, tipoPorNombre } from "./sistemas-core";
 import { ErrorDeNegocio } from "./usuarios-core";
 
 function exigirGestion(actor: UsuarioSesion): void {
@@ -28,6 +30,9 @@ export type DatosActivo = {
   codigo: string;
   nombre: string;
   plantaId: number;
+  /** Tipo elegido de la lista (formulario). */
+  tipoMaquinaId?: number | null;
+  /** Tipo escrito por nombre (carga desde Excel): si no existe, se crea. */
   tipo?: string;
   fabricante?: string;
   modelo?: string;
@@ -41,7 +46,7 @@ export type DatosActivo = {
   seccion?: string;
   garantia?: string;
   codigoMetrics?: string;
-  /** Sectores o componentes, uno por línea o separados por coma. */
+  /** Sistemas propios de la máquina, además de la plantilla de su tipo: uno por línea o separados por coma. */
   sectores?: string;
 };
 
@@ -56,7 +61,6 @@ function camposDeFicha(datos: DatosActivo) {
   if (!nombre) throw new ErrorDeNegocio("Falta el nombre de la máquina.");
   return {
     nombre,
-    tipo: limpio(datos.tipo),
     fabricante: limpio(datos.fabricante),
     modelo: limpio(datos.modelo),
     numeroSerie: limpio(datos.numeroSerie),
@@ -71,6 +75,19 @@ function camposDeFicha(datos: DatosActivo) {
     garantia: limpio(datos.garantia),
     codigoMetrics: limpio(datos.codigoMetrics),
   };
+}
+
+type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];
+
+/** El tipo de máquina: el elegido de la lista o, en la carga desde Excel, el escrito por nombre. */
+async function resolverTipo(tx: Tx, datos: Pick<DatosActivo, "tipo" | "tipoMaquinaId">): Promise<number | null> {
+  if (datos.tipoMaquinaId != null && Number.isInteger(datos.tipoMaquinaId)) {
+    const [tipo] = await tx.select({ id: tiposMaquina.id }).from(tiposMaquina).where(eq(tiposMaquina.id, datos.tipoMaquinaId));
+    if (!tipo) throw new ErrorDeNegocio("El tipo de máquina elegido ya no existe.");
+    return tipo.id;
+  }
+  if (datos.tipo?.trim()) return tipoPorNombre(tx, datos.tipo);
+  return null;
 }
 
 /** Edita la ficha técnica y el estado operativo. El ID del activo no cambia. */
@@ -89,18 +106,25 @@ export async function actualizarActivo(
     await db.transaction(async (tx) => {
       const [planta] = await tx.select({ id: plantas.id }).from(plantas).where(eq(plantas.id, datos.plantaId));
       if (!planta) throw new ErrorDeNegocio("Elige la planta.");
+      const tipoMaquinaId = await resolverTipo(tx, datos);
       const cambiados = await tx
         .update(activos)
-        .set({ ...campos, plantaId: planta.id, estadoOperativo: datos.estadoOperativo as EstadoOperativo })
+        .set({ ...campos, tipoMaquinaId, plantaId: planta.id, estadoOperativo: datos.estadoOperativo as EstadoOperativo })
         .where(eq(activos.id, id))
         .returning({ id: activos.id });
       if (cambiados.length === 0) throw new ErrorDeNegocio("El activo no existe.");
+      // Una máquina sin árbol recibe la plantilla del tipo recién elegido. Si ya tiene árbol,
+      // no se toca: la plantilla se aplica a pedido desde la ficha.
+      if (tipoMaquinaId !== null) {
+        const [uno] = await tx.select({ id: sectores.id }).from(sectores).where(eq(sectores.activoId, id)).limit(1);
+        if (!uno) await copiarPlantilla(tx, id);
+      }
       await tx.insert(bitacora).values({
         usuarioId: actor.id,
         accion: "EDITAR_ACTIVO",
         entidad: "activo",
         entidadId: String(id),
-        detalle: { ...campos, estadoOperativo: datos.estadoOperativo },
+        detalle: { ...campos, tipoMaquinaId, estadoOperativo: datos.estadoOperativo },
       });
     });
   } catch (e) {
@@ -119,12 +143,17 @@ export async function crearActivo(db: DB, actor: UsuarioSesion, datos: DatosActi
     return await db.transaction(async (tx) => {
       const [planta] = await tx.select({ id: plantas.id }).from(plantas).where(eq(plantas.id, datos.plantaId));
       if (!planta) throw new ErrorDeNegocio("Elige la planta.");
+      const tipoMaquinaId = await resolverTipo(tx, datos);
       const [nuevo] = await tx
         .insert(activos)
-        .values({ ...campos, codigo, plantaId: planta.id })
+        .values({ ...campos, tipoMaquinaId, codigo, plantaId: planta.id })
         .returning({ id: activos.id });
-      if (nombresSector.length) {
-        await tx.insert(sectores).values(nombresSector.map((n) => ({ activoId: nuevo.id, nombre: n })));
+      // Primero la plantilla del tipo; después, los sistemas propios que no estén ya en ella.
+      if (tipoMaquinaId !== null) await copiarPlantilla(tx, nuevo.id);
+      const raices = await tx.select({ nombre: sectores.nombre, padreId: sectores.padreId }).from(sectores).where(eq(sectores.activoId, nuevo.id));
+      const faltan = nombresSector.filter((n) => !raices.some((r) => r.padreId === null && mismoNombre(r.nombre, n)));
+      if (faltan.length) {
+        await tx.insert(sectores).values(faltan.map((n) => ({ activoId: nuevo.id, nombre: n })));
       }
       await tx.insert(bitacora).values({
         usuarioId: actor.id,
@@ -137,18 +166,6 @@ export async function crearActivo(db: DB, actor: UsuarioSesion, datos: DatosActi
     });
   } catch (e) {
     if (esDuplicado(e)) throw new ErrorDeNegocio("Ya existe un activo con ese ID o con ese código de Metrics.");
-    throw e;
-  }
-}
-
-export async function agregarSector(db: DB, actor: UsuarioSesion, activoId: number, nombre: string): Promise<void> {
-  exigirGestion(actor);
-  const limpioNombre = nombre.trim();
-  if (!limpioNombre) throw new ErrorDeNegocio("Escribe el nombre del sector.");
-  try {
-    await db.insert(sectores).values({ activoId, nombre: limpioNombre });
-  } catch (e) {
-    if (esDuplicado(e)) throw new ErrorDeNegocio("Ese sector ya existe en esta máquina.");
     throw e;
   }
 }

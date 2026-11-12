@@ -10,6 +10,7 @@ import {
   ordenesTrabajo,
   plantas,
   sectores,
+  tiposMaquina,
   solicitudes,
   usuarios,
 } from "@/db/schema";
@@ -150,13 +151,14 @@ export function listarActivos() {
       id: activos.id,
       codigo: activos.codigo,
       nombre: activos.nombre,
-      tipo: activos.tipo,
+      tipo: tiposMaquina.nombre,
       seccion: activos.seccion,
       estadoOperativo: activos.estadoOperativo,
       planta: plantas.nombre,
     })
     .from(activos)
     .innerJoin(plantas, eq(plantas.id, activos.plantaId))
+    .leftJoin(tiposMaquina, eq(tiposMaquina.id, activos.tipoMaquinaId))
     .where(eq(activos.activo, true))
     .orderBy(asc(plantas.nombre), asc(activos.nombre));
 }

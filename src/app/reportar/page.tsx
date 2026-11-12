@@ -17,9 +17,9 @@ const OPCIONES: { valor: Categoria; nombre: string }[] = [
   { valor: "SAC", nombre: "Apoyo crítico (SAC)" },
 ];
 
-export default async function Reportar({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+export default async function Reportar({ searchParams }: { searchParams: Promise<{ error?: string; activo?: string }> }) {
   const usuario = await exigirPerfil("OPERADOR", "TECNICO", "JEFE_PLANIFICADOR", "ADMINISTRADOR");
-  const { error } = await searchParams;
+  const { error, activo: pedido } = await searchParams;
   const [lista, [ultima]] = await Promise.all([
     listarActivos(),
     db
@@ -29,10 +29,9 @@ export default async function Reportar({ searchParams }: { searchParams: Promise
       .orderBy(desc(solicitudes.creadaEn))
       .limit(1),
   ]);
-  // La última máquina que usó esta persona aparece primero.
-  const ordenada = [...lista].sort(
-    (a, b) => Number(b.id === ultima?.activoId) - Number(a.id === ultima?.activoId),
-  );
+  // Primero la máquina cuyo QR se escaneó; si no viene de un QR, la última que usó esta persona.
+  const primera = lista.some((a) => a.id === Number(pedido)) ? Number(pedido) : ultima?.activoId;
+  const ordenada = [...lista].sort((a, b) => Number(b.id === primera) - Number(a.id === primera));
   const opciones = puedeEntrarAdmin(usuario.perfil)
     ? [...OPCIONES, { valor: "SERVICIOS_GENERALES" as Categoria, nombre: "Servicios generales" }]
     : OPCIONES;
