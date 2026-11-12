@@ -82,6 +82,8 @@ export type DatosRepuesto = {
   codigo: string;
   codigoFabricante?: string | null;
   marca?: string | null;
+  /** Cuenta contable a la que se imputa. undefined: no se toca. */
+  cuentaId?: number | null;
   descripcion: string;
   unidad?: string | null;
   familia?: string | null;
@@ -112,6 +114,7 @@ function limpiarRepuesto(d: DatosRepuesto) {
     descripcion,
     codigoFabricante: d.codigoFabricante?.trim() || null,
     marca: d.marca?.trim() || null,
+    ...(d.cuentaId === undefined ? {} : { cuentaId: d.cuentaId || null }),
     unidad: d.unidad?.trim().toLowerCase() || "unidad",
     familia: d.familia?.trim() || null,
     stockMinimo: r2(stockMinimo),

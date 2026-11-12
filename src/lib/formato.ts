@@ -7,3 +7,9 @@ export function pesos(n: number): string {
 export function cant(n: number): string {
   return n.toLocaleString("es-CL", { maximumFractionDigits: 2 });
 }
+
+/** Monto en la moneda de una orden de compra: pesos sin decimales; el resto, con 2 (o hasta 4 en precios). */
+export function monto(n: number, moneda: string, decimales = 2): string {
+  if (moneda === "CLP") return pesos(n);
+  return `${moneda} ${n.toLocaleString("es-CL", { minimumFractionDigits: 2, maximumFractionDigits: decimales })}`;
+}

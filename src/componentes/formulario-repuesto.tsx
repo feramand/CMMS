@@ -8,11 +8,13 @@ export function FormularioRepuesto({
   repuesto,
   maquinas,
   asociadas = [],
+  cuentas = [],
 }: {
   accion: (f: FormData) => Promise<void>;
   repuesto?: FilaExistencia;
   maquinas: Maquina[];
   asociadas?: number[];
+  cuentas?: { id: number; codigo: string; nombre: string; activo: boolean }[];
 }) {
   const r = repuesto;
   return (
@@ -49,6 +51,19 @@ export function FormularioRepuesto({
       <label className="flex flex-col gap-1 text-sm font-semibold">
         Stock máximo
         <input name="stockMaximo" inputMode="decimal" defaultValue={r?.stockMaximo ?? ""} className={campo} />
+      </label>
+      <label className="flex flex-col gap-1 text-sm font-semibold sm:col-span-2">
+        Cuenta contable (opcional)
+        <select name="cuentaId" defaultValue={r?.cuentaId ?? ""} className={campo}>
+          <option value="">Sin cuenta</option>
+          {cuentas
+            .filter((c) => c.activo || c.id === r?.cuentaId)
+            .map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.codigo} · {c.nombre}
+              </option>
+            ))}
+        </select>
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold sm:col-span-2">
         Máquinas en las que se usa (opcional; mantén Ctrl para elegir varias)

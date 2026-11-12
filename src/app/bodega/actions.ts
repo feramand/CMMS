@@ -66,6 +66,7 @@ function datosRepuesto(f: FormData): DatosRepuesto {
     descripcion: texto(f.get("descripcion")),
     codigoFabricante: texto(f.get("codigoFabricante")),
     marca: texto(f.get("marca")),
+    cuentaId: entero(f.get("cuentaId")) || null,
     unidad: texto(f.get("unidad")),
     familia: texto(f.get("familia")),
     stockMinimo: opcional(f.get("stockMinimo"), "El stock mínimo"),

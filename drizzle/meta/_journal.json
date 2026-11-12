@@ -85,6 +85,13 @@
       "when": 1794522311081,
       "tag": "0011_marca_repuesto",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794522979839,
+      "tag": "0012_compras",
+      "breakpoints": true
     }
   ]
 }

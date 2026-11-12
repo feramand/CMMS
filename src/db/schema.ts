@@ -160,6 +160,8 @@ export const activos = pgTable("activos", {
   codigoMetrics: text("codigo_metrics").unique(),
   girosAcumulados: bigint("giros_acumulados", { mode: "number" }),
   // Qué cuenta el contador de esta máquina: giros, libros, pliegos, golpes…
+  // Centro de costo al que se imputan los repuestos consumidos en esta máquina.
+  centroCostoId: integer("centro_costo_id").references((): AnyPgColumn => centrosCosto.id),
   unidadContador: text("unidad_contador").notNull().default("giros"),
   ultimaPreventiva: date("ultima_preventiva"),
   // Nombre de la última pauta preventiva ejecutada; lo llena el registro de mantención (etapa 2).
@@ -552,6 +554,7 @@ export const repuestos = pgTable("repuestos", {
   stockMaximo: cantidad("stock_maximo"),
   // Costo unitario por precio medio ponderado, en pesos. Lo actualizan las entradas.
   costoMedio: cantidad("costo_medio").notNull().default(0),
+  cuentaId: integer("cuenta_id").references((): AnyPgColumn => cuentasContables.id),
   activo: boolean("activo").notNull().default(true),
   creadoEn: timestamp("creado_en", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -655,3 +658,161 @@ export const lineasToma = pgTable(
   },
   (t) => [primaryKey({ columns: [t.tomaId, t.repuestoId] })],
 );
+
+// ---------- Compras ----------
+
+export const cuentasContables = pgTable("cuentas_contables", {
+  id: serial("id").primaryKey(),
+  codigo: text("codigo").notNull().unique(),
+  nombre: text("nombre").notNull(),
+  activo: boolean("activo").notNull().default(true),
+});
+
+export const centrosCosto = pgTable("centros_costo", {
+  id: serial("id").primaryKey(),
+  codigo: text("codigo").notNull().unique(),
+  nombre: text("nombre").notNull(),
+  activo: boolean("activo").notNull().default(true),
+});
+
+export const proveedores = pgTable("proveedores", {
+  id: serial("id").primaryKey(),
+  rut: text("rut").unique(),
+  nombre: text("nombre").notNull(),
+  giro: text("giro"),
+  contacto: text("contacto"),
+  email: text("email"),
+  telefono: text("telefono"),
+  direccion: text("direccion"),
+  condicionPago: text("condicion_pago"),
+  // Proveedor técnico externo: presta servicios de mantenimiento, además de (o en vez de) vender repuestos.
+  esTecnico: boolean("es_tecnico").notNull().default(false),
+  activo: boolean("activo").notNull().default(true),
+});
+
+export const estadoScEnum = pgEnum("estado_sc", ["ENVIADA", "APROBADA", "CONVERTIDA", "RECHAZADA"]);
+
+export const solicitudesCompra = pgTable("solicitudes_compra", {
+  id: serial("id").primaryKey(),
+  solicitanteId: integer("solicitante_id")
+    .notNull()
+    .references(() => usuarios.id),
+  centroCostoId: integer("centro_costo_id").references(() => centrosCosto.id),
+  estado: estadoScEnum("estado").notNull().default("ENVIADA"),
+  nota: text("nota"),
+  motivoRechazo: text("motivo_rechazo"),
+  creadaEn: timestamp("creada_en", { withTimezone: true }).notNull().defaultNow(),
+  resueltaPor: integer("resuelta_por").references(() => usuarios.id),
+  resueltaEn: timestamp("resuelta_en", { withTimezone: true }),
+});
+
+export const lineasSc = pgTable("lineas_sc", {
+  id: serial("id").primaryKey(),
+  scId: integer("sc_id")
+    .notNull()
+    .references(() => solicitudesCompra.id, { onDelete: "cascade" }),
+  // Vacío si lo pedido no es un repuesto del catálogo (un servicio, un insumo que no se guarda en bodega).
+  repuestoId: integer("repuesto_id").references(() => repuestos.id),
+  descripcion: text("descripcion").notNull(),
+  cantidad: cantidad("cantidad").notNull(),
+});
+
+export const monedaEnum = pgEnum("moneda", ["CLP", "UF", "USD", "EUR", "CHF"]);
+export type Moneda = (typeof monedaEnum.enumValues)[number];
+
+export const estadoOcEnum = pgEnum("estado_oc", [
+  "EMITIDA",
+  "AUTORIZADA",
+  "RECIBIDA_PARCIAL",
+  "RECIBIDA_TOTAL",
+  "RECHAZADA",
+  "ANULADA",
+]);
+export type EstadoOc = (typeof estadoOcEnum.enumValues)[number];
+
+export const ordenesCompra = pgTable("ordenes_compra", {
+  id: serial("id").primaryKey(),
+  scId: integer("sc_id")
+    .notNull()
+    .references(() => solicitudesCompra.id),
+  proveedorId: integer("proveedor_id")
+    .notNull()
+    .references(() => proveedores.id),
+  moneda: monedaEnum("moneda").notNull().default("CLP"),
+  estado: estadoOcEnum("estado").notNull().default("EMITIDA"),
+  centroCostoId: integer("centro_costo_id").references(() => centrosCosto.id),
+  fechaEntrega: date("fecha_entrega"),
+  condicionPago: text("condicion_pago"),
+  nota: text("nota"),
+  motivo: text("motivo"),
+  // Se genera cuando quedan las dos autorizaciones. Va impreso en el timbre.
+  codigoVerificacion: text("codigo_verificacion").unique(),
+  emitidaPor: integer("emitida_por")
+    .notNull()
+    .references(() => usuarios.id),
+  emitidaEn: timestamp("emitida_en", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const lineasOc = pgTable("lineas_oc", {
+  id: serial("id").primaryKey(),
+  ocId: integer("oc_id")
+    .notNull()
+    .references(() => ordenesCompra.id, { onDelete: "cascade" }),
+  repuestoId: integer("repuesto_id").references(() => repuestos.id),
+  descripcion: text("descripcion").notNull(),
+  cantidad: cantidad("cantidad").notNull(),
+  // Precio neto unitario en la moneda de la OC. Hasta 4 decimales (UF, dólares).
+  precioUnitario: numeric("precio_unitario", { precision: 16, scale: 4, mode: "number" }).notNull(),
+  recibida: cantidad("recibida").notNull().default(0),
+});
+
+export const rolAutorizacionEnum = pgEnum("rol_autorizacion", ["JEFE_MANTENIMIENTO", "GERENTE_PRODUCCION"]);
+export type RolAutorizacion = (typeof rolAutorizacionEnum.enumValues)[number];
+
+// Una fila por cada autorización. La OC necesita las dos: jefe de mantenimiento y gerente de producción.
+export const autorizacionesOc = pgTable(
+  "autorizaciones_oc",
+  {
+    ocId: integer("oc_id")
+      .notNull()
+      .references(() => ordenesCompra.id, { onDelete: "cascade" }),
+    rol: rolAutorizacionEnum("rol").notNull(),
+    usuarioId: integer("usuario_id")
+      .notNull()
+      .references(() => usuarios.id),
+    // Nombre tal como estaba al autorizar: es lo que queda impreso en el timbre.
+    nombre: text("nombre").notNull(),
+    fecha: timestamp("fecha", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.ocId, t.rol] })],
+);
+
+export const recepciones = pgTable("recepciones", {
+  id: serial("id").primaryKey(),
+  ocId: integer("oc_id")
+    .notNull()
+    .references(() => ordenesCompra.id),
+  almacenId: integer("almacen_id")
+    .notNull()
+    .references(() => almacenes.id),
+  // Pesos por unidad de la moneda de la OC, digitado al recibir. 1 si la OC es en pesos.
+  tipoCambio: numeric("tipo_cambio", { precision: 14, scale: 4, mode: "number" }).notNull().default(1),
+  documento: text("documento"),
+  usuarioId: integer("usuario_id")
+    .notNull()
+    .references(() => usuarios.id),
+  fecha: timestamp("fecha", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const lineasRecepcion = pgTable("lineas_recepcion", {
+  id: serial("id").primaryKey(),
+  recepcionId: integer("recepcion_id")
+    .notNull()
+    .references(() => recepciones.id, { onDelete: "cascade" }),
+  lineaOcId: integer("linea_oc_id")
+    .notNull()
+    .references(() => lineasOc.id),
+  cantidad: cantidad("cantidad").notNull(),
+  // Entrada a bodega que generó, si la línea es de un repuesto del catálogo.
+  movimientoId: integer("movimiento_id").references(() => movimientos.id),
+});
