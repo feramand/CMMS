@@ -63,11 +63,11 @@ export default async function Preventivo({ searchParams }: { searchParams: Promi
                 </select>
               </label>
               <label className="flex flex-col gap-1 text-sm font-semibold">
-                Intervalo (días o giros, según lo anterior)
+                Intervalo propio de esta máquina (días o giros)
                 <input name="intervalo" required inputMode="numeric" placeholder="30 o 500.000" className={campo} />
               </label>
               <label className="flex flex-col gap-1 text-sm font-semibold">
-                Especialidad que la ejecuta
+                Especialidad responsable
                 <select name="especialidadId" required className={campo}>
                   {listaEsp.map((e) => (
                     <option key={e.id} value={e.id}>
@@ -82,7 +82,7 @@ export default async function Preventivo({ searchParams }: { searchParams: Promi
                   <input name="baseFecha" type="date" className={campo} />
                 </label>
                 <label className="flex flex-col gap-1 text-sm font-semibold">
-                  Giros de la última mantención
+                  Contador en la última mantención
                   <input name="baseGiros" inputMode="numeric" className={campo} />
                 </label>
               </div>
@@ -91,7 +91,8 @@ export default async function Preventivo({ searchParams }: { searchParams: Promi
                 parte en el contador actual de la máquina.
               </p>
               <label className="flex flex-col gap-1 text-sm font-semibold sm:col-span-2">
-                Actividades del checklist (una por línea)
+                Actividades de la cartilla, una por línea. Para indicar quién la hace, empieza con el grupo:
+                «Operador: limpiar sensores», «Eléctrica: revisar tablero». Sin grupo, la hace la especialidad responsable.
                 <textarea name="actividades" rows={4} className="rounded-lg border border-slate-400 bg-white p-2 text-base font-normal" />
               </label>
               <button type="submit" className={`${botonPrimario} sm:col-span-2`}>
@@ -116,7 +117,7 @@ export default async function Preventivo({ searchParams }: { searchParams: Promi
                         <Link href={`/admin/preventivo/${p.id}`} className="flex flex-col">
                           <span className="text-lg font-semibold text-marca underline">{p.nombre}</span>
                           <span className="text-sm text-slate-600">
-                            {p.activo} · {p.especialidad} · {intervaloTexto(p.tipo, p.intervalo)}
+                            {p.activo} · {p.especialidad} · {intervaloTexto(p.tipo, p.intervalo, p.unidad)}
                           </span>
                         </Link>
                         <ChipPauta p={p} />

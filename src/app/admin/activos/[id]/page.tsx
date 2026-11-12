@@ -134,6 +134,7 @@ export default async function FichaActivo({ params, searchParams }: Props) {
                 ["seccion", "Ubicación o sección", m.seccion],
                 ["garantia", "Garantía", m.garantia],
                 ["codigoMetrics", "Código en Metrics", m.codigoMetrics],
+                ["unidadContador", "Qué cuenta el contador (giros, libros…)", m.unidadContador],
               ] as const
             ).map(([nombre, etiqueta, valor]) => (
               <label key={nombre} className="flex flex-col gap-1 text-sm font-semibold">
@@ -189,7 +190,7 @@ export default async function FichaActivo({ params, searchParams }: Props) {
             <div key={p.id} className="flex flex-col gap-1 border-t border-slate-200 pt-2">
               <div className="flex items-center justify-between gap-2">
                 <Link href={`/admin/preventivo/${p.id}`} className="text-marca underline">
-                  {p.nombre} · {intervaloTexto(p.tipo, p.intervalo)}
+                  {p.nombre} · {intervaloTexto(p.tipo, p.intervalo, p.unidad)}
                 </Link>
                 <ChipPauta p={p} />
               </div>
@@ -199,11 +200,11 @@ export default async function FichaActivo({ params, searchParams }: Props) {
         </section>
 
         <section className={`${tarjeta} flex flex-col gap-3`}>
-          <h2 className="text-lg font-bold">Contador de giros</h2>
+          <h2 className="text-lg font-bold">Contador de {m.unidadContador}</h2>
           <form action={accionRegistrarLectura} className="flex flex-wrap items-end gap-2">
             <input type="hidden" name="activoId" value={id} />
             <label className="flex flex-col gap-1 text-sm font-semibold">
-              Giros acumulados (lectura manual)
+              Lectura manual del contador ({m.unidadContador} acumulados)
               <input name="giros" inputMode="numeric" required placeholder={m.girosAcumulados?.toLocaleString("es-CL") ?? "0"} className={`${campo} max-w-xs`} />
             </label>
             <button type="submit" className={botonPrimario}>
@@ -217,7 +218,7 @@ export default async function FichaActivo({ params, searchParams }: Props) {
             <ul className="flex flex-col gap-1 text-slate-700">
               {lecturas.map((l) => (
                 <li key={l.id}>
-                  {fechaHora(l.leidaEn)} · {l.giros.toLocaleString("es-CL")} giros · {l.origen === "METRICS" ? "Metrics" : "manual"}
+                  {fechaHora(l.leidaEn)} · {l.giros.toLocaleString("es-CL")} {m.unidadContador} · {l.origen === "METRICS" ? "Metrics" : "manual"}
                 </li>
               ))}
             </ul>

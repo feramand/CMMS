@@ -46,6 +46,8 @@ export type DatosActivo = {
   seccion?: string;
   garantia?: string;
   codigoMetrics?: string;
+  /** Qué cuenta el contador de la máquina: giros, libros, pliegos… */
+  unidadContador?: string;
   /** Sistemas propios de la máquina, además de la plantilla de su tipo: uno por línea o separados por coma. */
   sectores?: string;
 };
@@ -74,6 +76,7 @@ function camposDeFicha(datos: DatosActivo) {
     seccion: limpio(datos.seccion),
     garantia: limpio(datos.garantia),
     codigoMetrics: limpio(datos.codigoMetrics),
+    unidadContador: limpio(datos.unidadContador)?.toLowerCase() ?? "giros",
   };
 }
 

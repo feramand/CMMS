@@ -155,6 +155,8 @@ export const activos = pgTable("activos", {
   // Código de la máquina en Metrics, para la integración de la etapa 2.
   codigoMetrics: text("codigo_metrics").unique(),
   girosAcumulados: bigint("giros_acumulados", { mode: "number" }),
+  // Qué cuenta el contador de esta máquina: giros, libros, pliegos, golpes…
+  unidadContador: text("unidad_contador").notNull().default("giros"),
   ultimaPreventiva: date("ultima_preventiva"),
   // Nombre de la última pauta preventiva ejecutada; lo llena el registro de mantención (etapa 2).
   ultimoMp: text("ultimo_mp"),
@@ -412,6 +414,10 @@ export const actividadesPauta = pgTable("actividades_pauta", {
     .references(() => pautas.id, { onDelete: "cascade" }),
   orden: integer("orden").notNull(),
   descripcion: text("descripcion").notNull(),
+  // Quién hace la actividad: los operadores, o los técnicos de una especialidad.
+  // Sin ninguno de los dos, la hace la especialidad responsable de la cartilla.
+  operador: boolean("operador").notNull().default(false),
+  especialidadId: integer("especialidad_id").references(() => especialidades.id),
   activa: boolean("activa").notNull().default(true),
 });
 
@@ -459,6 +465,11 @@ export const actividadesCiclo = pgTable("actividades_ciclo", {
   descripcion: text("descripcion").notNull(),
   estado: estadoActividadEnum("estado").notNull().default("PENDIENTE"),
   nota: text("nota"),
+  // Grupo que la hace, ya resuelto al liberar: operadores o una especialidad.
+  operador: boolean("operador").notNull().default(false),
+  especialidadId: integer("especialidad_id").references(() => especialidades.id),
+  marcadaPor: integer("marcada_por").references(() => usuarios.id),
+  marcadaEn: timestamp("marcada_en", { withTimezone: true }),
 });
 
 // Códigos de falla de Metrics que generan una solicitud. Lo que no está aquí se ignora.

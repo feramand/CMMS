@@ -1,7 +1,7 @@
 import { Encabezado } from "@/componentes/encabezado";
 import { botonSecundario, tarjeta } from "@/componentes/ui";
 import { exigirPerfil } from "@/lib/dal";
-import { accionCargarActivos, accionCargarUsuarios } from "./actions";
+import { accionCargarActivos, accionCargarPautas, accionCargarUsuarios } from "./actions";
 import { FormularioCarga } from "./formulario";
 
 export default async function CargaInicial() {
@@ -19,12 +19,24 @@ export default async function CargaInicial() {
           <section className={`${tarjeta} flex flex-col gap-3`}>
             <h2 className="text-lg font-bold">Activos</h2>
             <p className="text-sm text-slate-600">
-              Una fila por máquina. Los sectores van en una sola celda, separados por coma.
+              Una fila por máquina. Los sistemas propios van en una sola celda, separados por coma.
             </p>
             <a href="/admin/carga/plantilla/activos" download className={botonSecundario}>
               Descargar plantilla de activos
             </a>
             <FormularioCarga accion={accionCargarActivos} etiqueta="Planilla de activos (.xlsx)" />
+          </section>
+          <section className={`${tarjeta} flex flex-col gap-3`}>
+            <h2 className="text-lg font-bold">Plan de mantenimiento</h2>
+            <p className="text-sm text-slate-600">
+              Cada máquina con sus propias cartillas e intervalos. Una fila por actividad: las filas que repiten
+              máquina y cartilla forman una sola cartilla. En «Quién hace la actividad» escribe Operador o una
+              especialidad; vacío significa la especialidad responsable.
+            </p>
+            <a href="/admin/carga/plantilla/pautas" download className={botonSecundario}>
+              Descargar plantilla del plan de mantenimiento
+            </a>
+            <FormularioCarga accion={accionCargarPautas} etiqueta="Planilla del plan de mantenimiento (.xlsx)" />
           </section>
           {usuario.perfil === "ADMINISTRADOR" && (
             <section className={`${tarjeta} flex flex-col gap-3`}>

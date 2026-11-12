@@ -59,7 +59,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
               <Link href={`/admin/activos/${p.activoId}`} className="text-marca underline">
                 {p.activo}
               </Link>{" "}
-              · {p.especialidad} · {intervaloTexto(p.tipo, p.intervalo)}
+              · {p.especialidad} · {intervaloTexto(p.tipo, p.intervalo, p.unidad)}
             </p>
           </div>
           <Link href="/admin/preventivo" className="text-marca underline">
@@ -80,7 +80,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
               <Dato etiqueta="Se libera">{p.resumen.liberacion}</Dato>
               <Dato etiqueta="Objetivo">{p.resumen.objetivo}</Dato>
               <Dato etiqueta="Incumplida si llega a">{p.resumen.limite}</Dato>
-              {esGiros && <Dato etiqueta="Contador actual">{n(p.giros)} giros</Dato>}
+              {esGiros && <Dato etiqueta="Contador actual">{n(p.giros)} {p.unidad}</Dato>}
               {p.ciclo.liberadoEn && <Dato etiqueta="Liberada el">{fechaHora(p.ciclo.liberadoEn)}</Dato>}
               {p.ciclo.responsable && <Dato etiqueta="La ejecuta">{p.ciclo.responsable}</Dato>}
             </div>
@@ -104,13 +104,16 @@ export default async function DetallePauta({ params, searchParams }: Props) {
         )}
 
         <section className={`${tarjeta} flex flex-col gap-3`}>
-          <h2 className="text-lg font-bold">Checklist · {actividades.length} actividades</h2>
+          <h2 className="text-lg font-bold">Cartilla · {actividades.length} actividades</h2>
           {actividades.length === 0 && <p className="text-slate-600">Sin actividades: la pauta se finaliza sin checklist.</p>}
           <ol className="flex flex-col gap-1">
             {actividades.map((a, i) => (
               <li key={a.id} className="flex items-center justify-between gap-2 border-t border-slate-200 pt-1">
                 <span>
-                  {i + 1}. {a.descripcion}
+                  {i + 1}. {a.descripcion}{" "}
+                  <span className="text-sm text-slate-600">
+                    · {a.operador ? "Operador" : (listaEsp.find((e) => e.id === (a.especialidadId ?? p.especialidadId))?.nombre ?? p.especialidad)}
+                  </span>
                 </span>
                 <form action={accionQuitarActividad}>
                   <input type="hidden" name="pautaId" value={id} />
@@ -125,11 +128,25 @@ export default async function DetallePauta({ params, searchParams }: Props) {
           <form action={accionAgregarActividad} className="flex flex-wrap gap-2">
             <input type="hidden" name="pautaId" value={id} />
             <input name="descripcion" required aria-label="Nueva actividad" placeholder="Nueva actividad" className={`${campo} max-w-md`} />
+            <select name="grupo" aria-label="Quién la hace" defaultValue="" className={`${campo} max-w-56`}>
+              <option value="">{p.especialidad} (responsable)</option>
+              <option value="OPERADOR">Operador</option>
+              {listaEsp
+                .filter((e) => e.id !== p.especialidadId)
+                .map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.nombre}
+                  </option>
+                ))}
+            </select>
             <button type="submit" className={botonPrimario}>
               Agregar actividad
             </button>
           </form>
-          <p className="text-sm text-slate-600">Los cambios valen desde la próxima liberación; una pauta ya liberada conserva su checklist.</p>
+          <p className="text-sm text-slate-600">
+            Una sola cartilla reúne las actividades de todos: al liberarse, cada grupo ve y marca solo las suyas, y la
+            cartilla se finaliza cuando todos terminan. Los cambios valen desde la próxima liberación.
+          </p>
         </section>
 
         <details className={tarjeta} open={Boolean(error)}>
@@ -141,7 +158,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
               <input name="nombre" required defaultValue={p.nombre} className={campo} />
             </label>
             <label className="flex flex-col gap-1 text-sm font-semibold">
-              Intervalo en {esGiros ? "giros" : "días"}
+              Intervalo en {esGiros ? p.unidad : "días"}
               <input name="intervalo" required inputMode="numeric" defaultValue={p.intervalo} className={campo} />
             </label>
             <label className="flex flex-col gap-1 text-sm font-semibold">
@@ -190,7 +207,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
                   <th className="p-2 font-semibold">Estado</th>
                   <th className="p-2 font-semibold">Cerrada</th>
                   <th className="p-2 font-semibold">Ejecutó</th>
-                  {esGiros && <th className="p-2 font-semibold">Giros reales</th>}
+                  {esGiros && <th className="p-2 font-semibold">Contador real</th>}
                 </tr>
               </thead>
               <tbody>

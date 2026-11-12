@@ -1,8 +1,10 @@
 import "server-only";
 import { and, asc, eq, inArray, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { activos, ciclosPauta, especialidades, pautas, plantas, usuarios } from "@/db/schema";
-import { avance, diasEntre } from "./pautas-calculo";
+import { actividadesCiclo, activos, ciclosPauta, especialidades, pautas, plantas, usuarios } from "@/db/schema";
+import { avance, diasEntre, parteDelGrupo, type GrupoVista } from "./pautas-calculo";
+
+export type { GrupoVista };
 import { partesEnChile } from "./tiempo";
 
 const n = (x: number) => x.toLocaleString("es-CL");
@@ -13,21 +15,27 @@ export function fechaCorta(iso: string | null): string {
   return `${d}-${m}-${a}`;
 }
 
-export function intervaloTexto(tipo: "TIEMPO" | "GIROS", intervalo: number): string {
-  return tipo === "GIROS" ? `cada ${n(intervalo)} giros` : `cada ${n(intervalo)} ${intervalo === 1 ? "día" : "días"}`;
+export function intervaloTexto(tipo: "TIEMPO" | "GIROS", intervalo: number, unidad = "giros"): string {
+  return tipo === "GIROS" ? `cada ${n(intervalo)} ${unidad}` : `cada ${n(intervalo)} ${intervalo === 1 ? "día" : "días"}`;
 }
 
 type CicloAbierto = typeof ciclosPauta.$inferSelect & { responsable: string | null };
 
 /** Avance del ciclo en porcentaje y los tres hitos en palabras. */
-export function resumenCiclo(tipo: "TIEMPO" | "GIROS", c: typeof ciclosPauta.$inferSelect, giros: number | null, hoy: string) {
+export function resumenCiclo(
+  tipo: "TIEMPO" | "GIROS",
+  c: typeof ciclosPauta.$inferSelect,
+  giros: number | null,
+  hoy: string,
+  unidad = "giros",
+) {
   if (tipo === "GIROS") {
     return {
       avance: avance(c.baseGiros!, c.objetivoGiros!, giros ?? c.baseGiros!),
-      liberacion: `${n(c.liberacionGiros!)} giros`,
-      objetivo: `${n(c.objetivoGiros!)} giros`,
-      limite: `${n(c.limiteGiros!)} giros`,
-      base: `${n(c.baseGiros!)} giros`,
+      liberacion: `${n(c.liberacionGiros!)} ${unidad}`,
+      objetivo: `${n(c.objetivoGiros!)} ${unidad}`,
+      limite: `${n(c.limiteGiros!)} ${unidad}`,
+      base: `${n(c.baseGiros!)} ${unidad}`,
       pasoObjetivo: (giros ?? 0) >= c.objetivoGiros!,
     };
   }
@@ -55,6 +63,7 @@ export async function listarPautas(filtro?: SQL) {
       activoId: activos.id,
       activo: activos.nombre,
       giros: activos.girosAcumulados,
+      unidad: activos.unidadContador,
       planta: plantas.nombre,
     })
     .from(pautas)
@@ -73,16 +82,27 @@ export async function listarPautas(filtro?: SQL) {
   return lista.map((p) => {
     const fila = abiertos.find((a) => a.ciclo.pautaId === p.id);
     const ciclo: CicloAbierto | null = fila ? { ...fila.ciclo, responsable: fila.responsable } : null;
-    return { ...p, ciclo, resumen: ciclo ? resumenCiclo(p.tipo, ciclo, p.giros, hoy) : null };
+    return { ...p, ciclo, resumen: ciclo ? resumenCiclo(p.tipo, ciclo, p.giros, hoy, p.unidad) : null };
   });
 }
 
 export type PautaListada = Awaited<ReturnType<typeof listarPautas>>[number];
 
-/** Pautas liberadas (pendientes de ejecutar) de una especialidad, las más avanzadas primero. */
-export async function pautasLiberadas(especialidadId?: number) {
-  const lista = await listarPautas(and(eq(pautas.activa, true), especialidadId ? eq(pautas.especialidadId, especialidadId) : undefined));
+/**
+ * Cartillas liberadas en las que un grupo (los operadores o una especialidad) tiene actividades,
+ * con el avance de su parte. Las más avanzadas en el intervalo van primero.
+ */
+export async function pautasLiberadas(grupo: GrupoVista, activoId?: number) {
+  const lista = (await listarPautas(and(eq(pautas.activa, true), activoId ? eq(pautas.activoId, activoId) : undefined))).filter(
+    (p) => p.ciclo?.estado === "LIBERADA",
+  );
+  if (lista.length === 0) return [];
+  const checklist = await db
+    .select({ cicloId: actividadesCiclo.cicloId, estado: actividadesCiclo.estado, operador: actividadesCiclo.operador, especialidadId: actividadesCiclo.especialidadId })
+    .from(actividadesCiclo)
+    .where(inArray(actividadesCiclo.cicloId, lista.map((p) => p.ciclo!.id)));
   return lista
-    .filter((p) => p.ciclo?.estado === "LIBERADA")
+    .map((p) => ({ ...p, ...parteDelGrupo(checklist.filter((a) => a.cicloId === p.ciclo!.id), grupo, p.especialidadId) }))
+    .filter((p) => p.participa)
     .sort((a, b) => (b.resumen?.avance ?? 0) - (a.resumen?.avance ?? 0));
 }

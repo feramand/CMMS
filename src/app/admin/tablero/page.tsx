@@ -138,7 +138,7 @@ async function columnasMp(): Promise<Columna[]> {
   ]);
   const tarjeta = (p: (typeof lista)[number], pie: string, alerta?: string): Tarjeta => ({
     href: p.ciclo?.estado === "LIBERADA" ? `/pauta/${p.ciclo.id}` : `/admin/preventivo/${p.id}`,
-    folio: `Pauta ${intervaloTexto(p.tipo, p.intervalo)} · ${p.especialidad}`,
+    folio: `Pauta ${intervaloTexto(p.tipo, p.intervalo, p.unidad)} · ${p.especialidad}`,
     titulo: p.activo,
     detalle: `${p.nombre} · ${p.resumen?.avance ?? 0} % del intervalo`,
     pie,

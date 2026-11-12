@@ -31,12 +31,12 @@ const AVISOS: Record<string, string> = {
 
 // Ejecución de una pauta: checklist, acciones derivadas y cierre. Pensada para el celular.
 export default async function EjecutarPauta({ params, searchParams }: Props) {
-  const usuario = await exigirPerfil("TECNICO", "JEFE_PLANIFICADOR", "ADMINISTRADOR");
+  const usuario = await exigirPerfil("TECNICO", "OPERADOR", "JEFE_PLANIFICADOR", "ADMINISTRADOR");
   const id = Number((await params).id);
   const { error, aviso } = await searchParams;
   if (!Number.isInteger(id)) notFound();
   const [f] = await db
-    .select({ ciclo: ciclosPauta, pauta: pautas, activo: activos.nombre, giros: activos.girosAcumulados, especialidad: especialidades.nombre })
+    .select({ ciclo: ciclosPauta, pauta: pautas, activo: activos.nombre, giros: activos.girosAcumulados, unidad: activos.unidadContador, especialidad: especialidades.nombre })
     .from(ciclosPauta)
     .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
     .innerJoin(activos, eq(activos.id, pautas.activoId))
@@ -44,16 +44,30 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
     .where(eq(ciclosPauta.id, id));
   if (!f) notFound();
   const { ciclo: c, pauta } = f;
-  const [checklist, [ficha], [ejecutor], repuestos, ots] = await Promise.all([
+  const [checklist, [ficha], [ejecutor], repuestos, ots, listaEsp, marcadores] = await Promise.all([
     db.select().from(actividadesCiclo).where(eq(actividadesCiclo.cicloId, id)).orderBy(asc(actividadesCiclo.orden), asc(actividadesCiclo.id)),
     db.select({ esp: fichasTecnico.especialidadId }).from(fichasTecnico).where(eq(fichasTecnico.usuarioId, usuario.id)),
     c.ejecutadoPor ? db.select({ nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, c.ejecutadoPor)) : [],
     db.select().from(solicitudesRepuesto).where(eq(solicitudesRepuesto.cicloId, id)),
     db.select({ id: ordenesTrabajo.id, folio: ordenesTrabajo.folio, descripcion: ordenesTrabajo.descripcion }).from(ordenesTrabajo).where(eq(ordenesTrabajo.cicloId, id)),
+    db.select({ id: especialidades.id, nombre: especialidades.nombre }).from(especialidades),
+    db
+      .select({ id: actividadesCiclo.id, nombre: usuarios.nombre })
+      .from(actividadesCiclo)
+      .innerJoin(usuarios, eq(usuarios.id, actividadesCiclo.marcadaPor))
+      .where(eq(actividadesCiclo.cicloId, id)),
   ]);
-  const resumen = resumenCiclo(pauta.tipo, c, f.giros, partesEnChile(new Date()).fecha);
-  const puede = c.estado === "LIBERADA" && (usuario.perfil !== "TECNICO" || ficha?.esp === pauta.especialidadId);
+  const resumen = resumenCiclo(pauta.tipo, c, f.giros, partesEnChile(new Date()).fecha, f.unidad);
+  const gestiona = usuario.perfil === "ADMINISTRADOR" || usuario.perfil === "JEFE_PLANIFICADOR";
+  const esOperador = usuario.perfil === "OPERADOR";
+  // Cada grupo marca solo sus actividades: los operadores las de operador, cada técnico las de su especialidad.
+  const esMia = (a: (typeof checklist)[number]) => gestiona || (a.operador ? esOperador : !esOperador && a.especialidadId === ficha?.esp);
+  const participa = gestiona || checklist.some(esMia) || (checklist.length === 0 && !esOperador && ficha?.esp === pauta.especialidadId);
+  const puede = c.estado === "LIBERADA" && participa;
   const hechas = checklist.filter((a) => a.estado !== "PENDIENTE").length;
+  const pendientes = checklist.length - hechas;
+  const nombreGrupo = (a: (typeof checklist)[number]) => (a.operador ? "Operador" : (listaEsp.find((e) => e.id === a.especialidadId)?.nombre ?? "—"));
+  const grupos = [...new Set(checklist.map(nombreGrupo))].sort((a, b) => Number(a !== "Operador") - Number(b !== "Operador") || a.localeCompare(b, "es"));
   const esGiros = pauta.tipo === "GIROS";
   return (
     <>
@@ -92,17 +106,17 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
           <Dato etiqueta="Avance del intervalo">{resumen.avance} %</Dato>
           <Dato etiqueta="Objetivo">{resumen.objetivo}</Dato>
           <Dato etiqueta="Límite">{resumen.limite}</Dato>
-          {esGiros && <Dato etiqueta="Giros actuales">{f.giros === null ? "—" : f.giros.toLocaleString("es-CL")}</Dato>}
+          {esGiros && <Dato etiqueta="Contador actual">{f.giros === null ? "—" : `${f.giros.toLocaleString("es-CL")} ${f.unidad}`}</Dato>}
           {c.estado === "EJECUTADA" && (
             <>
               <Dato etiqueta="Ejecutó">{ejecutor?.nombre ?? "—"}</Dato>
               <Dato etiqueta="Finalizada">{fechaHora(c.cerradoEn)}</Dato>
-              {esGiros && <Dato etiqueta="Giros al ejecutar">{c.girosReales?.toLocaleString("es-CL") ?? "—"}</Dato>}
+              {esGiros && <Dato etiqueta="Contador al ejecutar">{c.girosReales?.toLocaleString("es-CL") ?? "—"}</Dato>}
             </>
           )}
         </section>
         {c.estado === "PROGRAMADA" && <p className="text-slate-700">Esta pauta todavía no está liberada: se libera en {resumen.liberacion}.</p>}
-        {c.estado === "LIBERADA" && !puede && <p className="text-slate-700">Esta pauta la ejecuta la especialidad {f.especialidad}.</p>}
+        {c.estado === "LIBERADA" && !puede && <p className="text-slate-700">No tienes actividades en esta cartilla. Especialidad responsable: {f.especialidad}.</p>}
 
         {c.estado !== "PROGRAMADA" && (
           <section className="flex flex-col gap-2">
@@ -110,17 +124,28 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
               Checklist · {hechas} de {checklist.length}
             </h2>
             {checklist.length === 0 && <p className="text-slate-600">Esta pauta no tiene actividades.</p>}
-            {checklist.map((a, i) => (
+            {grupos.map((g) => (
+              <div key={g} className="flex flex-col gap-2">
+                {grupos.length > 1 && (
+                  <h3 className="mt-2 text-base font-bold text-slate-700">
+                    {g} · {checklist.filter((a) => nombreGrupo(a) === g && a.estado !== "PENDIENTE").length} de{" "}
+                    {checklist.filter((a) => nombreGrupo(a) === g).length}
+                  </h3>
+                )}
+            {checklist.filter((a) => nombreGrupo(a) === g).map((a) => (
               <div key={a.id} className={`${tarjeta} flex flex-col gap-2`}>
                 <div className="flex items-start justify-between gap-2">
-                  <span className="text-lg">
-                    {i + 1}. {a.descripcion}
-                  </span>
+                  <span className="text-lg">{a.descripcion}</span>
                   {a.estado === "HECHA" && <Chip tono="verde">Hecha</Chip>}
                   {a.estado === "NO_REALIZADA" && <Chip tono="rojo">No realizada</Chip>}
                 </div>
                 {a.nota && <span className="text-slate-700">Nota: {a.nota}</span>}
-                {puede && (
+                {a.estado !== "PENDIENTE" && (
+                  <span className="text-sm text-slate-600">
+                    {marcadores.find((m) => m.id === a.id)?.nombre ?? "—"} · {fechaHora(a.marcadaEn)}
+                  </span>
+                )}
+                {puede && esMia(a) && (
                   <form action={accionMarcarActividad} className="flex flex-col gap-2">
                     <input type="hidden" name="cicloId" value={id} />
                     <input type="hidden" name="id" value={a.id} />
@@ -148,6 +173,8 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
                 )}
               </div>
             ))}
+              </div>
+            ))}
           </section>
         )}
 
@@ -171,13 +198,15 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
           <>
             <section className="flex flex-col gap-2">
               <h2 className="text-lg font-bold">Si encontraste algo</h2>
-              <Link href={`/repuesto?pauta=${id}`} className={`${botonSecundario} h-14 text-lg`}>
-                Solicitar repuesto
-              </Link>
+              {!esOperador && (
+                <Link href={`/repuesto?pauta=${id}`} className={`${botonSecundario} h-14 text-lg`}>
+                  Solicitar repuesto
+                </Link>
+              )}
               <Link href={`/reportar?activo=${pauta.activoId}`} className={`${botonSecundario} h-14 text-lg`}>
                 Reportar falla
               </Link>
-              <details className={tarjeta}>
+              <details className={tarjeta} hidden={esOperador}>
                 <summary className="cursor-pointer text-lg font-semibold text-marca">Dejar una orden de trabajo (reparación futura)</summary>
                 <form action={accionOtDesdePauta} className="mt-3 flex flex-col gap-2">
                   <input type="hidden" name="cicloId" value={id} />
@@ -200,11 +229,17 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
               </details>
             </section>
 
+            {pendientes > 0 ? (
+              <p className={`${tarjeta} text-slate-700`}>
+                La cartilla se finaliza cuando todos los grupos terminan su parte.{" "}
+                {pendientes === 1 ? "Falta 1 actividad" : `Faltan ${pendientes} actividades`} por marcar.
+              </p>
+            ) : (
             <form action={accionFinalizarPauta} className={`${tarjeta} flex flex-col gap-3`}>
               <input type="hidden" name="cicloId" value={id} />
-              {esGiros && (
+              {esGiros && !esOperador && (
                 <label className="flex flex-col gap-1 text-base font-semibold">
-                  Giros actuales de la máquina
+                  Contador actual de la máquina ({f.unidad})
                   <input name="giros" inputMode="numeric" defaultValue={f.giros ?? ""} required className={`${campo} h-14 text-lg`} />
                 </label>
               )}
@@ -216,6 +251,7 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
                 Finalizar pauta
               </button>
             </form>
+            )}
           </>
         )}
         {c.observaciones && (

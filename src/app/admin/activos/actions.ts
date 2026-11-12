@@ -26,6 +26,7 @@ export async function accionCrearActivo(formData: FormData) {
       seccion: t("seccion"),
       garantia: t("garantia"),
       codigoMetrics: t("codigoMetrics"),
+      unidadContador: t("unidadContador"),
       sectores: t("sectores"),
     });
     return `/admin/activos/${id}`;
@@ -53,6 +54,7 @@ export async function accionActualizarActivo(formData: FormData) {
       seccion: t("seccion"),
       garantia: t("garantia"),
       codigoMetrics: t("codigoMetrics"),
+      unidadContador: t("unidadContador"),
       estadoOperativo: t("estadoOperativo"),
     });
   });

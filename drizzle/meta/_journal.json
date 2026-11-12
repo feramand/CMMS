@@ -50,6 +50,13 @@
       "when": 1794501246431,
       "tag": "0006_etapa2_preventivo_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794503255971,
+      "tag": "0007_cartillas_por_grupo",
+      "breakpoints": true
     }
   ]
 }

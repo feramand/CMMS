@@ -59,7 +59,9 @@ export async function accionActualizarPauta(formData: FormData) {
 export async function accionAgregarActividad(formData: FormData) {
   const actor = await exigirSesion();
   const pautaId = entero(formData.get("pautaId"));
-  await ejecutar(`/admin/preventivo/${pautaId}`, () => agregarActividad(db, actor, pautaId, texto(formData.get("descripcion"))));
+  await ejecutar(`/admin/preventivo/${pautaId}`, () =>
+    agregarActividad(db, actor, pautaId, texto(formData.get("descripcion")), texto(formData.get("grupo"))),
+  );
 }
 
 export async function accionQuitarActividad(formData: FormData) {

@@ -54,3 +54,21 @@ export function avance(base: number, objetivo: number, actual: number): number {
 export function esFechaValida(fecha: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(fecha) && !Number.isNaN(Date.parse(`${fecha}T00:00:00Z`)) && sumarDias(fecha, 0) === fecha;
 }
+
+export type GrupoVista = { operador: true } | { operador: false; especialidadId: number };
+type ActividadDeCiclo = { estado: string; operador: boolean; especialidadId: number | null };
+
+/**
+ * Parte de una cartilla liberada que le toca a un grupo (los operadores o una especialidad).
+ * Una cartilla sin checklist la ejecuta su especialidad responsable.
+ */
+export function parteDelGrupo(checklist: ActividadDeCiclo[], grupo: GrupoVista, especialidadResponsable: number) {
+  const esMia = (a: ActividadDeCiclo) => (grupo.operador ? a.operador : !a.operador && a.especialidadId === grupo.especialidadId);
+  const mias = checklist.filter(esMia);
+  const sinChecklist = checklist.length === 0 && !grupo.operador && grupo.especialidadId === especialidadResponsable;
+  return {
+    miParte: { total: mias.length, hechas: mias.filter((a) => a.estado !== "PENDIENTE").length },
+    pendientesDeOtros: checklist.filter((a) => !esMia(a) && a.estado === "PENDIENTE").length,
+    participa: mias.length > 0 || sinChecklist,
+  };
+}

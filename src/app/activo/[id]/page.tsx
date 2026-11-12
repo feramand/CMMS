@@ -6,10 +6,11 @@ import { Encabezado } from "@/componentes/encabezado";
 import { FichaTecnica } from "@/componentes/ficha-tecnica";
 import { ChipOt, ChipSat, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { activos, ordenesTrabajo, plantas, sectores, solicitudes, tiposMaquina } from "@/db/schema";
+import { activos, fichasTecnico, ordenesTrabajo, plantas, sectores, solicitudes, tiposMaquina } from "@/db/schema";
 import { aplanar } from "@/lib/arbol";
 import { nombreCategoria } from "@/lib/categorias";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
+import { pautasLiberadas } from "@/lib/consultas-pautas";
 import { exigirSesion } from "@/lib/dal";
 import { puedeEntrarAdmin } from "@/lib/perfiles";
 import { fechaHora } from "@/lib/tiempo";
@@ -31,6 +32,16 @@ export default async function FichaPorQr({ params }: { params: Promise<{ id: str
   const veHistorial = usuario.perfil !== "OPERADOR";
   const puedeReportar = usuario.perfil !== "BODEGUERO" && usuario.perfil !== "ABASTECIMIENTO";
   const gestiona = usuario.perfil === "ADMINISTRADOR" || usuario.perfil === "JEFE_PLANIFICADOR";
+  const [ficha] =
+    usuario.perfil === "TECNICO"
+      ? await db.select({ esp: fichasTecnico.especialidadId }).from(fichasTecnico).where(eq(fichasTecnico.usuarioId, usuario.id))
+      : [];
+  const cartillas =
+    usuario.perfil === "OPERADOR"
+      ? await pautasLiberadas({ operador: true }, id)
+      : ficha
+        ? await pautasLiberadas({ operador: false, especialidadId: ficha.esp }, id)
+        : [];
   const [nodos, sats, ots] = await Promise.all([
     db.select().from(sectores).where(eq(sectores.activoId, id)),
     veHistorial ? listarSolicitudes(eq(solicitudes.activoId, id), 20) : [],
@@ -62,6 +73,14 @@ export default async function FichaPorQr({ params }: { params: Promise<{ id: str
             Reportar falla en esta máquina
           </Link>
         )}
+        {cartillas.map((p) => (
+          <Link key={p.id} href={`/pauta/${p.ciclo!.id}`} className={`${tarjeta} flex flex-col border-amber-400 bg-amber-50`}>
+            <span className="text-lg font-semibold">Cartilla liberada: {p.nombre}</span>
+            <span className="text-slate-700">
+              Tu parte: {p.miParte.hechas} de {p.miParte.total} · límite {p.resumen!.limite}
+            </span>
+          </Link>
+        ))}
         {gestiona && (
           <Link href={`/admin/activos/${id}`} className="text-marca underline">
             Abrir la ficha completa para editar
