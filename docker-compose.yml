@@ -25,13 +25,20 @@ services:
     environment:
       DATABASE_URL: postgres://cmms:${POSTGRES_PASSWORD}@db:5432/cmms
       SESSION_SECRET: ${SESSION_SECRET:?Falta SESSION_SECRET en .env}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
       ADMIN_RUT: ${ADMIN_RUT:-}
       ADMIN_NOMBRE: ${ADMIN_NOMBRE:-}
       ADMIN_CLAVE: ${ADMIN_CLAVE:-}
+      ADJUNTOS_DIR: /datos/adjuntos
       TZ: America/Santiago
+    volumes:
+      - cmms_adjuntos:/datos/adjuntos
     ports:
       # HTTPS lo entrega el proxy inverso de TI delante de este puerto.
       - "127.0.0.1:3000:3000"
 
 volumes:
   cmms_datos:
+  cmms_adjuntos:

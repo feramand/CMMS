@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CMMS",
+  title: "Print Garage",
   description: "Gestión de activos y mantenimiento",
 };
 

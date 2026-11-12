@@ -3,12 +3,12 @@ import type { MetadataRoute } from "next";
 // Permite instalar la aplicación en la pantalla de inicio de Android (y iOS).
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "CMMS Mantenimiento",
-    short_name: "CMMS",
+    name: "Print Garage",
+    short_name: "Print Garage",
     description: "Gestión de activos y mantenimiento",
     start_url: "/",
     display: "standalone",
-    background_color: "#f1f5f9",
+    background_color: "#ffffff",
     theme_color: "#0f4c81",
     lang: "es",
     icons: [

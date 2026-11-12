@@ -8,6 +8,20 @@
       "when": 1794351809765,
       "tag": "0000_base",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794453791713,
+      "tag": "0001_etapa1",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794455352554,
+      "tag": "0002_push_fotos_horarios",
+      "breakpoints": true
     }
   ]
 }
