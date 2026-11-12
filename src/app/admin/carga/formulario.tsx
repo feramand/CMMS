@@ -6,13 +6,17 @@ import type { EstadoCarga } from "./actions";
 export function FormularioCarga({
   accion,
   etiqueta,
+  children,
 }: {
   accion: (estado: EstadoCarga, formData: FormData) => Promise<EstadoCarga>;
   etiqueta: string;
+  /** Campos adicionales del formulario, antes del archivo. */
+  children?: React.ReactNode;
 }) {
   const [estado, enviar, cargando] = useActionState(accion, undefined);
   return (
     <form action={enviar} className="flex flex-col gap-3">
+      {children}
       <label className="flex flex-col gap-1 text-sm font-semibold">
         {etiqueta}
         <input

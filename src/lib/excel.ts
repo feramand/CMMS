@@ -37,10 +37,22 @@ export async function leerPlanilla(contenido: ArrayBuffer, columnas: Columna[]):
   const hoja = libro.worksheets[0];
   if (!hoja) throw new ErrorDeNegocio("La planilla no tiene hojas.");
   const porEncabezado = new Map(columnas.map((c) => [normalizar(c.titulo), c.clave]));
-  const claves: (string | undefined)[] = [];
-  hoja.getRow(1).eachCell((celda, n) => {
-    claves[n] = porEncabezado.get(normalizar(celda.text));
-  });
+  // Los encabezados suelen estar en la fila 1, pero una planilla con título encima también sirve:
+  // se toma la primera fila, entre las 30 primeras, que tenga todas las columnas obligatorias.
+  let claves: (string | undefined)[] = [];
+  let filaEncabezado = 1;
+  for (let n = 1; n <= Math.min(30, hoja.rowCount); n++) {
+    const candidata: (string | undefined)[] = [];
+    hoja.getRow(n).eachCell((celda, i) => {
+      candidata[i] = porEncabezado.get(normalizar(celda.text));
+    });
+    if (n === 1) claves = candidata;
+    if (columnas.every((c) => !c.obligatoria || candidata.includes(c.clave))) {
+      claves = candidata;
+      filaEncabezado = n;
+      break;
+    }
+  }
   const faltan = columnas.filter((c) => c.obligatoria && !claves.includes(c.clave));
   if (faltan.length > 0) {
     throw new ErrorDeNegocio(
@@ -48,13 +60,14 @@ export async function leerPlanilla(contenido: ArrayBuffer, columnas: Columna[]):
     );
   }
   const filas: Fila[] = [];
-  for (let n = 2; n <= hoja.rowCount; n++) {
+  for (let n = filaEncabezado + 1; n <= hoja.rowCount; n++) {
     const fila: Fila = {};
     hoja.getRow(n).eachCell((celda, i) => {
       const clave = claves[i];
       if (clave) fila[clave] = celda.text.trim();
     });
-    if (Object.values(fila).some((v) => v !== "")) filas.push(fila);
+    // `_fila` guarda el número de fila de la planilla, para señalar los errores.
+    if (Object.values(fila).some((v) => v !== "")) filas.push({ ...fila, _fila: String(n) });
   }
   return filas;
 }

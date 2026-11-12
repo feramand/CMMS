@@ -28,6 +28,7 @@ const CAMPOS: [string, string, boolean?][] = [
   ["seccion", "Ubicación o sección"],
   ["garantia", "Garantía"],
   ["codigoMetrics", "Código en Metrics"],
+  ["unidadContador", "Qué cuenta el contador (giros, libros…)"],
 ];
 
 export default async function Activos({ searchParams }: { searchParams: Promise<{ error?: string }> }) {

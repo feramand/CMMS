@@ -1,4 +1,4 @@
-// Carga inicial desde planillas: activos y usuarios. Todo o nada: si una fila falla, no se carga ninguna.
+// Carga inicial desde planillas: activos, usuarios y plan de mantenimiento. Todo o nada: si una fila falla, no se carga ninguna.
 import { eq } from "drizzle-orm";
 import type { DB } from "@/db";
 import { especialidades, plantas, type Modalidad, type Perfil } from "@/db/schema";
@@ -25,6 +25,7 @@ export const COLUMNAS_ACTIVOS: Columna[] = [
   { clave: "seccion", titulo: "Ubicación o sección", ejemplo: "Offset" },
   { clave: "garantia", titulo: "Garantía", ejemplo: "" },
   { clave: "codigoMetrics", titulo: "Código en Metrics", ejemplo: "" },
+  { clave: "unidadContador", titulo: "Qué cuenta el contador (giros, libros…)", ejemplo: "giros" },
   { clave: "sectores", titulo: "Sistemas propios (separados por coma)", ejemplo: "Marcador, Cuerpo impresor 1, Salida" },
 ];
 
@@ -75,7 +76,7 @@ async function cargar(
   try {
     await db.transaction(async (tx) => {
       for (const [i, fila] of filas.entries()) {
-        const n = i + 2;
+        const n = Number(fila._fila) || i + 2;
         const falta = columnas.find((c) => c.obligatoria && !fila[c.clave]?.trim());
         if (falta) {
           errores.push(`Fila ${n}: falta "${falta.titulo}".`);

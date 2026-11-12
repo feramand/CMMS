@@ -155,6 +155,8 @@ export const activos = pgTable("activos", {
   // Código de la máquina en Metrics, para la integración de la etapa 2.
   codigoMetrics: text("codigo_metrics").unique(),
   girosAcumulados: bigint("giros_acumulados", { mode: "number" }),
+  // Qué cuenta el contador de esta máquina: giros, libros, pliegos, golpes…
+  unidadContador: text("unidad_contador").notNull().default("giros"),
   ultimaPreventiva: date("ultima_preventiva"),
   // Nombre de la última pauta preventiva ejecutada; lo llena el registro de mantención (etapa 2).
   ultimoMp: text("ultimo_mp"),
@@ -248,6 +250,8 @@ export const solicitudes = pgTable("solicitudes", {
   idDetencionMetrics: text("id_detencion_metrics").unique(),
   // Hora en que se detuvo la máquina (viene de Metrics); distinta de la creación de la solicitud.
   detenidaEn: timestamp("detenida_en", { withTimezone: true }),
+  // ¿La falla tiene la máquina detenida? Solo esas solicitudes cuentan como downtime.
+  maquinaDetenida: boolean("maquina_detenida").notNull().default(true),
   creadaEn: timestamp("creada_en", { withTimezone: true }).notNull().defaultNow(),
   creadaPor: integer("creada_por").references(() => usuarios.id),
   comentario: text("comentario"),
@@ -398,6 +402,10 @@ export const pautas = pgTable("pautas", {
     .notNull()
     .references(() => especialidades.id),
   // Porcentajes propios de la pauta; null = los generales de Configuración.
+  // Frecuencia teórica de la cartilla (quincenal, semestral…). Solo de referencia para quien planifica.
+  frecuencia: text("frecuencia"),
+  // Al liberarse, esta cartilla incluye las tareas de las cartillas de menor intervalo de la máquina.
+  incluyeInferiores: boolean("incluye_inferiores").notNull().default(true),
   pctLiberacion: integer("pct_liberacion"),
   pctLimite: integer("pct_limite"),
   activa: boolean("activa").notNull().default(true),
@@ -412,6 +420,20 @@ export const actividadesPauta = pgTable("actividades_pauta", {
     .references(() => pautas.id, { onDelete: "cascade" }),
   orden: integer("orden").notNull(),
   descripcion: text("descripcion").notNull(),
+  // Ficha de la tarea, tal como viene en la cartilla del fabricante o de la planta.
+  codigo: text("codigo"),
+  zona: text("zona"),
+  subsistema: text("subsistema"),
+  componente: text("componente"),
+  tipoTarea: text("tipo_tarea"),
+  // ¿Exige la máquina detenida? SI, NO o PARCIAL.
+  detencion: text("detencion"),
+  insumos: text("insumos"),
+  minutos: integer("minutos"),
+  // Quién hace la actividad: los operadores, los técnicos de una especialidad, o cualquiera
+  // de los dos (operador y especialidad a la vez). Sin ninguno: la especialidad responsable.
+  operador: boolean("operador").notNull().default(false),
+  especialidadId: integer("especialidad_id").references(() => especialidades.id),
   activa: boolean("activa").notNull().default(true),
 });
 
@@ -445,6 +467,8 @@ export const ciclosPauta = pgTable("ciclos_pauta", {
   ejecutadoPor: integer("ejecutado_por").references(() => usuarios.id),
   girosReales: bigint("giros_reales", { mode: "number" }),
   observaciones: text("observaciones"),
+  // Ciclo de una cartilla mayor, ya liberada, que incluye a esta: mientras dure, esta no se ejecuta por separado.
+  incluidoEnCicloId: integer("incluido_en_ciclo_id").references((): AnyPgColumn => ciclosPauta.id, { onDelete: "set null" }),
 });
 
 export const estadoActividadEnum = pgEnum("estado_actividad", ["PENDIENTE", "HECHA", "NO_REALIZADA"]);
@@ -459,6 +483,25 @@ export const actividadesCiclo = pgTable("actividades_ciclo", {
   descripcion: text("descripcion").notNull(),
   estado: estadoActividadEnum("estado").notNull().default("PENDIENTE"),
   nota: text("nota"),
+  // Ficha de la tarea, tal como viene en la cartilla del fabricante o de la planta.
+  codigo: text("codigo"),
+  zona: text("zona"),
+  subsistema: text("subsistema"),
+  componente: text("componente"),
+  tipoTarea: text("tipo_tarea"),
+  // ¿Exige la máquina detenida? SI, NO o PARCIAL.
+  detencion: text("detencion"),
+  insumos: text("insumos"),
+  minutos: integer("minutos"),
+  // Nombre de la cartilla menor de la que viene la tarea; null = es de esta cartilla.
+  pautaOrigen: text("pauta_origen"),
+  // Por qué no se realizó: EN_PRODUCCION, SIN_TECNICO, OTRO_TRABAJO u OTRO.
+  motivo: text("motivo"),
+  // Grupo que la hace, ya resuelto al liberar: operadores, una especialidad, o ambos.
+  operador: boolean("operador").notNull().default(false),
+  especialidadId: integer("especialidad_id").references(() => especialidades.id),
+  marcadaPor: integer("marcada_por").references(() => usuarios.id),
+  marcadaEn: timestamp("marcada_en", { withTimezone: true }),
 });
 
 // Códigos de falla de Metrics que generan una solicitud. Lo que no está aquí se ignora.

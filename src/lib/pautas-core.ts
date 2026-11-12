@@ -1,5 +1,5 @@
 // Mantenimiento preventivo: pautas por tiempo y por giros, sus ciclos y las lecturas de contador.
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
 import type { DB } from "@/db";
 import {
   actividadesCiclo,
@@ -89,6 +89,80 @@ function hitosDe(pauta: Pauta, base: number | string, p: Porcentajes) {
   return { baseFecha: base as string, liberacionFecha: h.liberacion, objetivoFecha: h.objetivo, limiteFecha: h.limite };
 }
 
+// ---------- Grupos: quién hace cada actividad de la cartilla ----------
+
+/** Operadores, o técnicos de una especialidad. Sin ninguno: la especialidad responsable de la cartilla. */
+export type GrupoActividad = { operador: boolean; especialidadId: number | null };
+
+const sinTildes = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const ALIAS_ESPECIALIDAD: Record<string, string> = {
+  mecanico: "MEC", mecanica: "MEC", mecanicos: "MEC",
+  electrico: "ELE", electrica: "ELE", electricos: "ELE", electricidad: "ELE",
+  serviciosgenerales: "SSGG", apoyocritico: "SAC",
+};
+
+/** Reconoce un grupo escrito a mano: "Operador", el nombre o el código de una especialidad. */
+export function grupoPorNombre(
+  nombre: string,
+  lista: { id: number; codigo: string; nombre: string }[],
+): GrupoActividad | null {
+  const n = sinTildes(nombre);
+  if (!n) return null;
+  if (n === "operador" || n === "operadores" || n === "operacion") return { operador: true, especialidadId: null };
+  const esp = lista.find((e) => sinTildes(e.nombre) === n || sinTildes(e.codigo) === n || e.codigo === ALIAS_ESPECIALIDAD[n]);
+  return esp ? { operador: false, especialidadId: esp.id } : null;
+}
+
+/**
+ * Una línea del checklist puede empezar con su grupo: "Operador: limpiar sensores" o
+ * "Eléctrica: revisar tablero". Sin grupo reconocido, la hace la especialidad responsable.
+ */
+export function separarGrupo(linea: string, lista: { id: number; codigo: string; nombre: string }[]) {
+  const corte = linea.indexOf(":");
+  const grupo = corte > 0 ? grupoPorNombre(linea.slice(0, corte), lista) : null;
+  const descripcion = (grupo ? linea.slice(corte + 1) : linea).trim();
+  return { descripcion, ...(grupo ?? { operador: false, especialidadId: null }) };
+}
+
+type GrupoActor = { todos: true } | ({ todos: false } & GrupoActividad);
+
+/** A qué grupo pertenece quien ejecuta: jefe y administrador pueden marcar cualquier actividad. */
+async function grupoDe(ex: Ejecutor, actor: UsuarioSesion): Promise<GrupoActor> {
+  if (gestiona(actor)) return { todos: true };
+  if (actor.perfil === "OPERADOR") return { todos: false, operador: true, especialidadId: null };
+  if (actor.perfil === "TECNICO") {
+    const [ficha] = await ex.select({ esp: fichasTecnico.especialidadId }).from(fichasTecnico).where(eq(fichasTecnico.usuarioId, actor.id));
+    return { todos: false, operador: false, especialidadId: ficha?.esp ?? null };
+  }
+  throw new ErrorDeNegocio("Tu perfil no ejecuta pautas.");
+}
+
+// Una actividad puede ser de los operadores, de una especialidad, o de cualquiera de los dos.
+const esDelGrupo = (g: GrupoActor, a: GrupoActividad) =>
+  g.todos || (a.operador && g.operador) || (!g.operador && g.especialidadId !== null && g.especialidadId === a.especialidadId);
+
+export const MOTIVOS_NO_REALIZADA = {
+  EN_PRODUCCION: "En producción",
+  SIN_TECNICO: "Sin técnico",
+  OTRO_TRABAJO: "Asignado a otro trabajo",
+  OTRO: "Otro",
+} as const;
+export type MotivoNoRealizada = keyof typeof MOTIVOS_NO_REALIZADA;
+
+/** Una tarea de la cartilla con su ficha completa. */
+export type TareaDatos = GrupoActividad & {
+  descripcion: string;
+  codigo?: string | null;
+  zona?: string | null;
+  subsistema?: string | null;
+  componente?: string | null;
+  tipoTarea?: string | null;
+  detencion?: string | null;
+  insumos?: string | null;
+  minutos?: number | null;
+};
+
 /** Técnicos activos de una especialidad: reciben los avisos de sus pautas. */
 async function tecnicosDe(ex: Ejecutor, especialidadId: number): Promise<number[]> {
   const filas = await ex
@@ -100,22 +174,80 @@ async function tecnicosDe(ex: Ejecutor, especialidadId: number): Promise<number[
 }
 
 /** Pasa un ciclo a Liberada: copia el checklist vigente y avisa a los técnicos de la especialidad. */
+/** Cartillas activas de la misma máquina, del mismo tipo y de menor intervalo: la «rama inferior». */
+async function inferioresDe(ex: Ejecutor, pauta: Pauta): Promise<Pauta[]> {
+  if (!pauta.incluyeInferiores) return [];
+  return ex
+    .select()
+    .from(pautas)
+    .where(and(eq(pautas.activoId, pauta.activoId), eq(pautas.tipo, pauta.tipo), eq(pautas.activa, true), lt(pautas.intervalo, pauta.intervalo)))
+    .orderBy(desc(pautas.intervalo), asc(pautas.id));
+}
+
+/**
+ * Pasa un ciclo a Liberada: arma su checklist y avisa a los técnicos. Una cartilla mayor incluye
+ * las tareas de las cartillas menores de la máquina (2.000.000 incluye 500.000 y 100.000); mientras
+ * esté liberada, las menores quedan dentro de ella y no se ejecutan por separado.
+ */
 async function liberar(ex: Ejecutor, pauta: Pauta, maquina: string, cicloId: number, ahora: Date, por: number | null) {
   await ex
     .update(ciclosPauta)
     .set({ estado: "LIBERADA", liberadoEn: ahora, liberadoPor: por })
     .where(eq(ciclosPauta.id, cicloId));
-  const lista = await ex
+  const inferiores = await inferioresDe(ex, pauta);
+  const todas = [pauta, ...inferiores];
+  const actividades = await ex
     .select()
     .from(actividadesPauta)
-    .where(and(eq(actividadesPauta.pautaId, pauta.id), eq(actividadesPauta.activa, true)))
+    .where(and(inArray(actividadesPauta.pautaId, todas.map((p) => p.id)), eq(actividadesPauta.activa, true)))
     .orderBy(asc(actividadesPauta.orden), asc(actividadesPauta.id));
+  // Primero las tareas propias, después las de cada cartilla menor. Una tarea con el mismo
+  // código en dos cartillas (como las «AB») entra una sola vez.
+  const vistos = new Set<string>();
+  const lista = todas.flatMap((dueña) =>
+    actividades
+      .filter((a) => a.pautaId === dueña.id)
+      .filter((a) => {
+        if (!a.codigo) return true;
+        if (vistos.has(a.codigo)) return false;
+        vistos.add(a.codigo);
+        return true;
+      })
+      .map((a) => ({ ...a, dueña })),
+  );
   if (lista.length) {
-    await ex.insert(actividadesCiclo).values(lista.map((a) => ({ cicloId, orden: a.orden, descripcion: a.descripcion })));
+    await ex.insert(actividadesCiclo).values(
+      lista.map((a, i) => ({
+        cicloId,
+        orden: i + 1,
+        descripcion: a.descripcion,
+        codigo: a.codigo,
+        zona: a.zona,
+        subsistema: a.subsistema,
+        componente: a.componente,
+        tipoTarea: a.tipoTarea,
+        detencion: a.detencion,
+        insumos: a.insumos,
+        minutos: a.minutos,
+        pautaOrigen: a.dueña.id === pauta.id ? null : a.dueña.nombre,
+        operador: a.operador,
+        especialidadId: a.operador ? a.especialidadId : (a.especialidadId ?? a.dueña.especialidadId),
+      })),
+    );
   }
+  if (inferiores.length) {
+    await ex
+      .update(ciclosPauta)
+      .set({ incluidoEnCicloId: cicloId })
+      .where(and(inArray(ciclosPauta.pautaId, inferiores.map((p) => p.id)), inArray(ciclosPauta.estado, ["PROGRAMADA", "LIBERADA"])));
+  }
+  // Avisa a los técnicos de cada especialidad con actividades. A los operadores no se les
+  // envía aviso: ven la cartilla en su inicio y al escanear el QR de la máquina.
+  const involucradas = new Set([pauta.especialidadId, ...lista.filter((a) => a.especialidadId).map((a) => a.especialidadId!)]);
+  const tecnicos = (await Promise.all([...involucradas].map((id) => tecnicosDe(ex, id)))).flat();
   await notificar(
     ex,
-    [...(await tecnicosDe(ex, pauta.especialidadId)), ...(await idsPorPerfil(ex, "JEFE_PLANIFICADOR"))],
+    [...tecnicos, ...(await idsPorPerfil(ex, "JEFE_PLANIFICADOR"))],
     `Pauta liberada: ${maquina} · ${pauta.nombre}`,
     `/pauta/${cicloId}`,
   );
@@ -149,6 +281,17 @@ async function evaluarPauta(ex: Ejecutor, pautaId: number, generales: Porcentaje
       .from(ciclosPauta)
       .where(and(eq(ciclosPauta.pautaId, pautaId), inArray(ciclosPauta.estado, ["PROGRAMADA", "LIBERADA"])));
     if (!ciclo) return cambios;
+    if (ciclo.incluidoEnCicloId) {
+      // Dentro de una cartilla mayor liberada no se libera ni se incumple por separado.
+      const [mayor] = await ex
+        .select({ estado: ciclosPauta.estado, activa: pautas.activa })
+        .from(ciclosPauta)
+        .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+        .where(eq(ciclosPauta.id, ciclo.incluidoEnCicloId));
+      if (mayor?.estado === "LIBERADA" && mayor.activa) return cambios;
+      // La cartilla mayor se cerró o se desactivó: esta vuelve a correr sola.
+      await ex.update(ciclosPauta).set({ incluidoEnCicloId: null }).where(eq(ciclosPauta.id, ciclo.id));
+    }
     let enLiberacion: boolean, enObjetivo: boolean, vencida: boolean;
     if (pauta.tipo === "GIROS") {
       if (fila.giros === null) return cambios;
@@ -269,6 +412,10 @@ export type DatosPauta = {
   especialidadId: number;
   /** Actividades del checklist, una por línea. */
   actividades?: string;
+  /** Tareas con su ficha completa (carga desde la planilla de cartillas). Tienen prioridad sobre `actividades`. */
+  tareas?: TareaDatos[];
+  /** Frecuencia teórica, solo de referencia. */
+  frecuencia?: string | null;
   /** Punto de partida del primer ciclo. Si falta: el contador actual o la fecha de hoy. */
   baseGiros?: number | null;
   baseFecha?: string | null;
@@ -326,11 +473,21 @@ export async function crearPauta(db: DB, actor: UsuarioSesion, datos: DatosPauta
     }
     const [nueva] = await tx
       .insert(pautas)
-      .values({ activoId: maquina.id, tipo, intervalo: datos.intervalo, especialidadId: esp.id, creadaPor: actor.id, ...comunes })
+      .values({
+        activoId: maquina.id,
+        tipo,
+        intervalo: datos.intervalo,
+        especialidadId: esp.id,
+        creadaPor: actor.id,
+        frecuencia: datos.frecuencia?.trim() || null,
+        ...comunes,
+      })
       .returning();
-    const actividades = lineas(datos.actividades);
+    const listaEsp = await tx.select().from(especialidades);
+    const actividades: TareaDatos[] =
+      datos.tareas ?? lineas(datos.actividades).map((l) => separarGrupo(l, listaEsp)).filter((a) => a.descripcion);
     if (actividades.length) {
-      await tx.insert(actividadesPauta).values(actividades.map((descripcion, i) => ({ pautaId: nueva.id, orden: i + 1, descripcion })));
+      await tx.insert(actividadesPauta).values(actividades.map((a, i) => ({ pautaId: nueva.id, orden: i + 1, ...a })));
     }
     await tx.insert(ciclosPauta).values({ pautaId: nueva.id, ...hitosDe(nueva, base, porcentajesDe(nueva, await porcentajesGenerales(tx))) });
     await tx.insert(bitacora).values({
@@ -354,7 +511,11 @@ export async function actualizarPauta(
   db: DB,
   actor: UsuarioSesion,
   id: number,
-  datos: Pick<DatosPauta, "nombre" | "intervalo" | "especialidadId" | "pctLiberacion" | "pctLimite"> & { activa: boolean },
+  datos: Pick<DatosPauta, "nombre" | "intervalo" | "especialidadId" | "pctLiberacion" | "pctLimite"> & {
+    activa: boolean;
+    /** Si se omite, no cambia. */
+    incluyeInferiores?: boolean;
+  },
   ahora = new Date(),
 ): Promise<void> {
   exigirGestion(actor);
@@ -366,7 +527,13 @@ export async function actualizarPauta(
     if (!esp) throw new ErrorDeNegocio("Elige la especialidad.");
     const [nueva] = await tx
       .update(pautas)
-      .set({ ...comunes, intervalo: datos.intervalo, especialidadId: esp.id, activa: datos.activa })
+      .set({
+        ...comunes,
+        intervalo: datos.intervalo,
+        especialidadId: esp.id,
+        activa: datos.activa,
+        incluyeInferiores: datos.incluyeInferiores ?? actual.incluyeInferiores,
+      })
       .where(eq(pautas.id, id))
       .returning();
     const [abierto] = await tx
@@ -393,14 +560,28 @@ export async function actualizarPauta(
 }
 
 /** Agrega una actividad al checklist. Vale desde la próxima liberación. */
-export async function agregarActividad(db: DB, actor: UsuarioSesion, pautaId: number, descripcion: string): Promise<void> {
+export async function agregarActividad(
+  db: DB,
+  actor: UsuarioSesion,
+  pautaId: number,
+  descripcion: string,
+  /** "OPERADOR", el id de una especialidad, o vacío para la especialidad responsable. */
+  grupo = "",
+): Promise<void> {
   exigirGestion(actor);
   const texto = descripcion.trim();
   if (!texto) throw new ErrorDeNegocio("Describe la actividad.");
+  let quien: GrupoActividad = { operador: false, especialidadId: null };
+  if (grupo === "OPERADOR") quien = { operador: true, especialidadId: null };
+  else if (grupo) {
+    const [esp] = await db.select({ id: especialidades.id }).from(especialidades).where(eq(especialidades.id, Number(grupo)));
+    if (!esp) throw new ErrorDeNegocio("Elige quién hace la actividad.");
+    quien = { operador: false, especialidadId: esp.id };
+  }
   const existentes = await db.select({ orden: actividadesPauta.orden }).from(actividadesPauta).where(eq(actividadesPauta.pautaId, pautaId));
   const [pauta] = await db.select({ id: pautas.id }).from(pautas).where(eq(pautas.id, pautaId));
   if (!pauta) throw new ErrorDeNegocio("La pauta no existe.");
-  await db.insert(actividadesPauta).values({ pautaId, descripcion: texto, orden: Math.max(0, ...existentes.map((e) => e.orden)) + 1 });
+  await db.insert(actividadesPauta).values({ pautaId, descripcion: texto, orden: Math.max(0, ...existentes.map((e) => e.orden)) + 1, ...quien });
 }
 
 /** Quita una actividad del checklist. Los ciclos ya liberados conservan su copia. */
@@ -437,7 +618,10 @@ export async function liberarAnticipada(db: DB, actor: UsuarioSesion, cicloId: n
   });
 }
 
-/** Ciclo liberado que este usuario puede ejecutar: técnico de la especialidad, jefe o administrador. */
+/**
+ * Ciclo liberado, con su checklist y el grupo de quien actúa. Una cartilla puede tener
+ * actividades de operadores y de varias especialidades: cada grupo marca solo las suyas.
+ */
 async function cicloEjecutable(tx: Ejecutor, actor: UsuarioSesion, cicloId: number) {
   const [fila] = await tx
     .select({ ciclo: ciclosPauta, pauta: pautas, maquina: activos.nombre, giros: activos.girosAcumulados })
@@ -450,13 +634,31 @@ async function cicloEjecutable(tx: Ejecutor, actor: UsuarioSesion, cicloId: numb
   if (fila.ciclo.estado !== "LIBERADA") {
     throw new ErrorDeNegocio(fila.ciclo.estado === "PROGRAMADA" ? "Esta pauta todavía no está liberada." : "Esta pauta ya está cerrada.");
   }
-  if (actor.perfil === "TECNICO") {
-    const [ficha] = await tx.select({ esp: fichasTecnico.especialidadId }).from(fichasTecnico).where(eq(fichasTecnico.usuarioId, actor.id));
-    if (ficha?.esp !== fila.pauta.especialidadId) throw new ErrorDeNegocio("Esta pauta es de otra especialidad.");
-  } else if (!gestiona(actor)) {
-    throw new ErrorDeNegocio("Tu perfil no ejecuta pautas.");
+  if (fila.ciclo.incluidoEnCicloId) {
+    const [mayor] = await tx
+      .select({ nombre: pautas.nombre, estado: ciclosPauta.estado })
+      .from(ciclosPauta)
+      .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+      .where(eq(ciclosPauta.id, fila.ciclo.incluidoEnCicloId));
+    if (mayor?.estado === "LIBERADA") {
+      throw new ErrorDeNegocio(`Esta cartilla está incluida en «${mayor.nombre}»: se ejecuta desde ahí.`);
+    }
   }
-  return fila;
+  const grupo = await grupoDe(tx, actor);
+  const checklist = await tx.select().from(actividadesCiclo).where(eq(actividadesCiclo.cicloId, cicloId));
+  // Participa quien tiene actividades propias; en una cartilla sin checklist, la especialidad responsable.
+  const participa =
+    grupo.todos ||
+    checklist.some((a) => esDelGrupo(grupo, a)) ||
+    (checklist.length === 0 && !grupo.operador && grupo.especialidadId === fila.pauta.especialidadId);
+  return { ...fila, grupo, checklist, participa };
+}
+
+function exigirParticipacion(c: { participa: boolean; grupo: GrupoActor }): void {
+  if (c.participa) return;
+  throw new ErrorDeNegocio(
+    !c.grupo.todos && c.grupo.operador ? "Esta cartilla no tiene actividades de operador." : "Esta pauta es de otra especialidad.",
+  );
 }
 
 /** Marca una actividad del checklist. La primera marca deja a la persona como responsable. */
@@ -467,14 +669,32 @@ export async function marcarActividad(
   estado: EstadoActividad,
   nota?: string,
   ahora = new Date(),
+  motivoCrudo?: string,
 ): Promise<void> {
   const texto = nota?.trim() || null;
-  if (estado === "NO_REALIZADA" && !texto) throw new ErrorDeNegocio("Explica por qué no se realizó la actividad.");
+  // Sin motivo de la lista pero con explicación escrita, queda como «Otro».
+  const motivo = motivoCrudo && motivoCrudo in MOTIVOS_NO_REALIZADA ? (motivoCrudo as MotivoNoRealizada) : texto ? "OTRO" : null;
+  if (estado === "NO_REALIZADA" && (!motivo || (motivo === "OTRO" && !texto))) {
+    throw new ErrorDeNegocio("Explica por qué no se realizó la actividad.");
+  }
   await db.transaction(async (tx) => {
     const [actividad] = await tx.select().from(actividadesCiclo).where(eq(actividadesCiclo.id, actividadId));
     if (!actividad) throw new ErrorDeNegocio("La actividad no existe.");
-    const { ciclo } = await cicloEjecutable(tx, actor, actividad.cicloId);
-    await tx.update(actividadesCiclo).set({ estado, nota: estado === "PENDIENTE" ? null : texto }).where(eq(actividadesCiclo.id, actividadId));
+    const { ciclo, grupo } = await cicloEjecutable(tx, actor, actividad.cicloId);
+    if (!esDelGrupo(grupo, actividad)) {
+      throw new ErrorDeNegocio(actividad.operador ? "Esta actividad la hacen los operadores." : "Esta actividad es de otra especialidad.");
+    }
+    const pendiente = estado === "PENDIENTE";
+    await tx
+      .update(actividadesCiclo)
+      .set({
+        estado,
+        nota: pendiente ? null : texto,
+        motivo: estado === "NO_REALIZADA" ? motivo : null,
+        marcadaPor: pendiente ? null : actor.id,
+        marcadaEn: pendiente ? null : ahora,
+      })
+      .where(eq(actividadesCiclo.id, actividadId));
     if (!ciclo.iniciadoEn) {
       await tx.update(ciclosPauta).set({ iniciadoEn: ahora, responsableId: actor.id }).where(eq(ciclosPauta.id, ciclo.id));
     }
@@ -483,7 +703,7 @@ export async function marcarActividad(
 
 /**
  * Finaliza la pauta: exige el checklist completo, guarda quién, cuándo y con cuántos giros,
- * actualiza «Última preventiva» y «Último MP» de la máquina y programa el ciclo siguiente
+ * actualiza «Último MP» (fecha y cartilla) de la máquina y programa el ciclo siguiente
  * con base en el valor real (los giros o la fecha de hoy).
  */
 export async function finalizarCiclo(
@@ -494,16 +714,18 @@ export async function finalizarCiclo(
   ahora = new Date(),
 ): Promise<void> {
   const activoId = await db.transaction(async (tx) => {
-    const { ciclo, pauta, giros: contador } = await cicloEjecutable(tx, actor, cicloId);
-    const checklist = await tx.select().from(actividadesCiclo).where(eq(actividadesCiclo.cicloId, cicloId));
+    const ejecutable = await cicloEjecutable(tx, actor, cicloId);
+    exigirParticipacion(ejecutable);
+    const { ciclo, pauta, giros: contador, checklist } = ejecutable;
     const pendientes = checklist.filter((a) => a.estado === "PENDIENTE").length;
     if (pendientes > 0) {
-      throw new ErrorDeNegocio(`Faltan ${pendientes} ${pendientes === 1 ? "actividad" : "actividades"} por marcar.`);
+      throw new ErrorDeNegocio(pendientes === 1 ? "Falta 1 actividad por marcar." : `Faltan ${pendientes} actividades por marcar.`);
     }
     const hoy = partesEnChile(ahora).fecha;
     let girosReales: number | null = contador;
     if (pauta.tipo === "GIROS") {
-      const leidos = datos.giros ?? contador;
+      // El operador no digita el contador: se usa la última lectura registrada.
+      const leidos = (actor.perfil === "OPERADOR" ? null : datos.giros) ?? contador;
       if (leidos == null) throw new ErrorDeNegocio("Indica los giros actuales de la máquina.");
       if (!Number.isSafeInteger(leidos) || leidos < 0) throw new ErrorDeNegocio("Los giros deben ser un número entero, sin puntos ni decimales.");
       if (contador !== null && leidos < contador) {
@@ -531,7 +753,27 @@ export async function finalizarCiclo(
       .set({ ultimaPreventiva: hoy, ultimoMp: pauta.nombre, ...(pauta.tipo === "GIROS" ? { girosAcumulados: girosReales } : {}) })
       .where(eq(activos.id, pauta.activoId));
     const base = pauta.tipo === "GIROS" ? girosReales! : hoy;
-    await tx.insert(ciclosPauta).values({ pautaId: pauta.id, ...hitosDe(pauta, base, porcentajesDe(pauta, await porcentajesGenerales(tx))) });
+    const generales = await porcentajesGenerales(tx);
+    await tx.insert(ciclosPauta).values({ pautaId: pauta.id, ...hitosDe(pauta, base, porcentajesDe(pauta, generales)) });
+    // Las cartillas menores incluidas quedan ejecutadas con esta y parten de nuevo desde el mismo punto.
+    const incluidos = await tx
+      .select({ ciclo: ciclosPauta, pauta: pautas })
+      .from(ciclosPauta)
+      .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+      .where(and(eq(ciclosPauta.incluidoEnCicloId, cicloId), inArray(ciclosPauta.estado, ["PROGRAMADA", "LIBERADA"])));
+    for (const menor of incluidos) {
+      await tx
+        .update(ciclosPauta)
+        .set({
+          estado: "EJECUTADA",
+          cerradoEn: ahora,
+          ejecutadoPor: actor.id,
+          girosReales,
+          observaciones: `Incluida en «${pauta.nombre}».`,
+        })
+        .where(eq(ciclosPauta.id, menor.ciclo.id));
+      await tx.insert(ciclosPauta).values({ pautaId: menor.pauta.id, ...hitosDe(menor.pauta, base, porcentajesDe(menor.pauta, generales)) });
+    }
     await notificar(
       tx,
       (await idsPorPerfil(tx, "JEFE_PLANIFICADOR")).filter((id) => id !== actor.id),
@@ -556,7 +798,10 @@ export async function crearOtDesdePauta(
   if (!descripcion) throw new ErrorDeNegocio("Describe el trabajo que hay que hacer.");
   const prioridad = datos.prioridad === "ALTA" || datos.prioridad === "BAJA" ? datos.prioridad : "MEDIA";
   return db.transaction(async (tx) => {
-    const { pauta, maquina } = await cicloEjecutable(tx, actor, cicloId);
+    const ejecutable = await cicloEjecutable(tx, actor, cicloId);
+    if (actor.perfil === "OPERADOR") throw new ErrorDeNegocio("Los operadores reportan la falla; la orden de trabajo la deja un técnico.");
+    exigirParticipacion(ejecutable);
+    const { pauta, maquina } = ejecutable;
     const folio = await siguienteFolio(tx, ahora);
     const [ot] = await tx
       .insert(ordenesTrabajo)

@@ -7,14 +7,17 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { DB } from "@/db";
 import * as schema from "@/db/schema";
 import type { UsuarioSesion } from "./auth-core";
+import { importarCartilla } from "./cartilla-core";
 import { claveValida, guardarCodigo, recibirDeMetrics } from "./metrics-core";
 import { solicitarRepuesto } from "./ot-core";
+import { parteDelGrupo, type GrupoVista } from "./pautas-calculo";
 import {
   actualizarPauta,
   agregarActividad,
   crearOtDesdePauta,
   crearPauta,
   evaluarPautas,
+  separarGrupo,
   finalizarCiclo,
   liberarAnticipada,
   marcarActividad,
@@ -29,7 +32,7 @@ describe.skipIf(!url)("preventivo y Metrics (integración)", () => {
   let pool: Pool;
   let db: DB;
   let jefe: UsuarioSesion, mec: UsuarioSesion, ele: UsuarioSesion, operador: UsuarioSesion;
-  let maquina: number, espMec: number;
+  let maquina: number, espMec: number, espEle: number;
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: url });
@@ -49,6 +52,7 @@ describe.skipIf(!url)("preventivo y Metrics (integración)", () => {
       .values([{ codigo: "MEC", nombre: "Mecánica" }, { codigo: "ELE", nombre: "Electricidad" }])
       .returning();
     espMec = esp[0].id;
+    espEle = esp[1].id;
     const u = await db
       .insert(schema.usuarios)
       .values([
@@ -222,6 +226,218 @@ describe.skipIf(!url)("preventivo y Metrics (integración)", () => {
     const [o] = await db.select().from(schema.ordenesTrabajo).where(eq(schema.ordenesTrabajo.id, ot));
     expect(o).toMatchObject({ activoId: maquina, cicloId: c.id, estado: "CREADA", prioridad: "ALTA", especialidadId: espMec });
     await expect(crearOtDesdePauta(db, ele, c.id, { descripcion: "x" })).rejects.toThrow("otra especialidad");
+  });
+
+  describe("cartilla única con actividades por grupo", () => {
+    const cartilla = () =>
+      crearPauta(db, jefe, {
+        activoId: maquina, nombre: "Cartilla 500.000", tipo: "GIROS", intervalo: 500_000, especialidadId: espMec,
+        actividades: "Operador: Limpiar sensores de pliego\nEngrasar rodamientos\nEléctrica: Revisar tablero\nNota: revisar holguras",
+      });
+    const lista = (cicloId: number) =>
+      db.select().from(schema.actividadesCiclo).where(eq(schema.actividadesCiclo.cicloId, cicloId)).orderBy(schema.actividadesCiclo.orden);
+
+    const parte = async (cicloId: number, grupo: GrupoVista) => parteDelGrupo(await lista(cicloId), grupo, espMec);
+
+    it("reconoce el grupo al inicio de la línea y deja el resto a la especialidad responsable", () => {
+      const esp = [{ id: 1, codigo: "MEC", nombre: "Mecánica" }, { id: 2, codigo: "ELE", nombre: "Electricidad" }];
+      expect(separarGrupo("Operador: Limpiar sensores", esp)).toEqual({ descripcion: "Limpiar sensores", operador: true, especialidadId: null });
+      expect(separarGrupo("eléctrica : Revisar tablero", esp)).toEqual({ descripcion: "Revisar tablero", operador: false, especialidadId: 2 });
+      expect(separarGrupo("MEC: Engrasar", esp)).toEqual({ descripcion: "Engrasar", operador: false, especialidadId: 1 });
+      // Un texto con dos puntos que no nombra un grupo se conserva entero.
+      expect(separarGrupo("Nota: revisar holguras", esp)).toEqual({ descripcion: "Nota: revisar holguras", operador: false, especialidadId: null });
+    });
+
+    it("al liberarse, cada grupo ve solo su parte y se avisa a los técnicos de cada especialidad", async () => {
+      const id = await cartilla();
+      await leer(400_000);
+      const c = await abierto(id);
+      expect((await lista(c.id)).map((a) => [a.descripcion, a.operador, a.especialidadId])).toEqual([
+        ["Limpiar sensores de pliego", true, null],
+        ["Engrasar rodamientos", false, espMec],
+        ["Revisar tablero", false, espEle],
+        ["Nota: revisar holguras", false, espMec],
+      ]);
+      expect(await avisos(mec.id)).toEqual(["Pauta liberada: Heidelberg XL106 · Cartilla 500.000"]);
+      expect(await avisos(ele.id)).toEqual(["Pauta liberada: Heidelberg XL106 · Cartilla 500.000"]);
+      expect(await avisos(operador.id)).toEqual([]);
+      expect((await parte(c.id, { operador: true })).miParte).toEqual({ total: 1, hechas: 0 });
+      expect(await parte(c.id, { operador: false, especialidadId: espMec })).toMatchObject({ miParte: { total: 2, hechas: 0 }, pendientesDeOtros: 2, participa: true });
+      expect((await parte(c.id, { operador: false, especialidadId: espEle })).miParte).toEqual({ total: 1, hechas: 0 });
+    });
+
+    it("cada grupo marca solo lo suyo y la cartilla se finaliza cuando todos terminan", async () => {
+      const id = await cartilla();
+      await leer(450_000);
+      const c = await abierto(id);
+      const [deOperador, deMec, deEle, deMec2] = await lista(c.id);
+      await expect(marcarActividad(db, mec, deOperador.id, "HECHA")).rejects.toThrow("la hacen los operadores");
+      await expect(marcarActividad(db, operador, deMec.id, "HECHA")).rejects.toThrow("otra especialidad");
+      await expect(marcarActividad(db, ele, deMec.id, "HECHA")).rejects.toThrow("otra especialidad");
+      await marcarActividad(db, operador, deOperador.id, "HECHA");
+      await marcarActividad(db, mec, deMec.id, "HECHA");
+      await marcarActividad(db, mec, deMec2.id, "HECHA");
+      expect((await lista(c.id))[0]).toMatchObject({ estado: "HECHA", marcadaPor: operador.id });
+      // Falta la parte eléctrica: nadie puede finalizar todavía.
+      await expect(finalizarCiclo(db, mec, c.id)).rejects.toThrow("Falta 1 actividad");
+      expect(await parte(c.id, { operador: false, especialidadId: espMec })).toMatchObject({ miParte: { total: 2, hechas: 2 }, pendientesDeOtros: 1 });
+      // El jefe puede marcar cualquier actividad.
+      await marcarActividad(db, jefe, deEle.id, "HECHA");
+      // El operador no digita el contador: se usa la última lectura.
+      await finalizarCiclo(db, operador, c.id, { giros: 999_999_999 });
+      const [hecho, siguiente] = await ciclos(id);
+      expect(hecho).toMatchObject({ estado: "EJECUTADA", girosReales: 450_000, ejecutadoPor: operador.id });
+      expect(siguiente).toMatchObject({ estado: "PROGRAMADA", baseGiros: 450_000, objetivoGiros: 950_000 });
+    });
+
+    it("quien no tiene actividades en la cartilla no la finaliza ni deja órdenes de trabajo", async () => {
+      const id = await pautaGiros(); // solo actividades de mecánica
+      await leer(400_000);
+      const c = await abierto(id);
+      await completar(c.id);
+      await expect(finalizarCiclo(db, ele, c.id)).rejects.toThrow("otra especialidad");
+      await expect(finalizarCiclo(db, operador, c.id)).rejects.toThrow("no tiene actividades de operador");
+      await expect(crearOtDesdePauta(db, operador, c.id, { descripcion: "x" })).rejects.toThrow("la deja un técnico");
+      expect((await parte(c.id, { operador: true })).participa).toBe(false);
+      expect((await parte(c.id, { operador: false, especialidadId: espEle })).participa).toBe(false);
+    });
+
+it("carga las cartillas de una máquina desde su planilla, con la ficha completa de cada tarea", async () => {
+      await registrarLecturaManual(db, jefe, maquina, 1_000_000);
+      const fila = (n: number, pauta: string, encargado: string, extra: Record<string, string> = {}) => ({
+        _fila: String(n + 8), codigo: `MPO-${String(n).padStart(3, "0")}`, zona: "Marcador", subsistema: "Cabezal aspirador", componente: `Componente ${n}`,
+        pauta, tipoTarea: "Limpieza", encargado, detencion: "SI", tarea: `Tarea ${n}`, insumos: "Paño", minutos: "20",
+        frecuencia: pauta === "MENSUAL" ? "Bimestral" : "Quincenal", equivalencia: pauta === "MENSUAL" ? "1600000" : "400000", ...extra,
+      });
+      const filas = [
+        fila(1, "A", "Operador"),
+        fila(2, "AB", "Operador/Mecánico", { detencion: "Parcial" }),
+        fila(3, "B", "Eléctrico", { detencion: "NO", minutos: "" }),
+        fila(4, "MENSUAL", "Mecánico", { detencion: "Sí", tarea: "Línea 1\nLínea 2" }),
+        // Pie de la planilla: sin código ni pauta, se ignora aunque tenga texto en otras columnas.
+        { _fila: "90", zona: "Estado de la Orden de Trabajo", tarea: "Totalizador:" },
+      ];
+      const r = await importarCartilla(db, jefe, maquina, filas);
+      expect(r).toEqual({
+        tareas: 4,
+        cartillas: [
+          { nombre: "Pauta A", tareas: 2, intervalo: "400.000 giros" },
+          { nombre: "Pauta B", tareas: 2, intervalo: "400.000 giros" },
+          { nombre: "Pauta MENSUAL", tareas: 1, intervalo: "1.600.000 giros" },
+        ],
+      });
+      const cargadas = await db.select().from(schema.pautas).orderBy(schema.pautas.id);
+      expect(cargadas.map((p) => [p.nombre, p.tipo, p.intervalo, p.frecuencia])).toEqual([
+        ["Pauta A", "GIROS", 400_000, "Quincenal"], ["Pauta B", "GIROS", 400_000, "Quincenal"], ["Pauta MENSUAL", "GIROS", 1_600_000, "Bimestral"],
+      ]);
+      // Parten en el contador actual de la máquina.
+      expect(await abierto(cargadas[0].id)).toMatchObject({ estado: "PROGRAMADA", baseGiros: 1_000_000, objetivoGiros: 1_400_000 });
+      const deA = await db.select().from(schema.actividadesPauta).where(eq(schema.actividadesPauta.pautaId, cargadas[0].id)).orderBy(schema.actividadesPauta.orden);
+      expect(deA.map((a) => [a.codigo, a.operador, a.especialidadId, a.detencion, a.minutos])).toEqual([
+        ["MPO-001", true, null, "SI", 20], ["MPO-002", true, espMec, "PARCIAL", 20],
+      ]);
+      expect(deA[0]).toMatchObject({ zona: "Marcador", subsistema: "Cabezal aspirador", componente: "Componente 1", tipoTarea: "Limpieza", insumos: "Paño" });
+      const deB = await db.select().from(schema.actividadesPauta).where(eq(schema.actividadesPauta.pautaId, cargadas[1].id)).orderBy(schema.actividadesPauta.orden);
+      expect(deB.map((a) => [a.codigo, a.especialidadId, a.detencion, a.minutos])).toEqual([["MPO-002", espMec, "PARCIAL", 20], ["MPO-003", espEle, "NO", null]]);
+      // La cartilla también deja la ubicación de cada tarea en el árbol de sistemas de la máquina.
+      const arbol = await db.select().from(schema.sectores).where(eq(schema.sectores.activoId, maquina));
+      expect(arbol.map((n) => n.nombre).sort()).toEqual(["Cabezal aspirador", "Componente 1", "Componente 2", "Componente 3", "Componente 4", "Marcador"]);
+
+      // Al liberarse, la tarea compartida la marca el operador o el mecánico, y el ciclo conserva la ficha.
+      await leer(1_320_000);
+      const c = await abierto(cargadas[0].id);
+      const [soloOperador, compartida] = await lista(c.id);
+      expect(compartida).toMatchObject({ codigo: "MPO-002", zona: "Marcador", detencion: "PARCIAL", minutos: 20, operador: true, especialidadId: espMec });
+      await expect(marcarActividad(db, ele, compartida.id, "HECHA")).rejects.toThrow("la hacen los operadores");
+      await marcarActividad(db, mec, compartida.id, "HECHA");
+      await marcarActividad(db, operador, soloOperador.id, "NO_REALIZADA", undefined, undefined, "EN_PRODUCCION");
+      expect((await lista(c.id))[0]).toMatchObject({ estado: "NO_REALIZADA", motivo: "EN_PRODUCCION", nota: null });
+      await expect(marcarActividad(db, operador, soloOperador.id, "NO_REALIZADA", undefined, undefined, "OTRO")).rejects.toThrow("Explica por qué");
+
+      // Todo o nada, con el número de fila de la planilla en cada error.
+      const mala = [
+        fila(10, "C", "Pintor"),
+        fila(11, "C", "Operador", { detencion: "A veces" }),
+        fila(11, "C", "Operador"),
+        fila(12, "A", "Operador"),
+        fila(13, "D", "Operador", { equivalencia: "", frecuencia: "Cuando se pueda" }),
+      ];
+      const error = await importarCartilla(db, jefe, maquina, mala).catch((e) => e);
+      expect(error.errores).toEqual([
+        'Fila 18: no reconozco el encargado "Pintor". Usa Operador, Mecánico, Eléctrico u otra especialidad.',
+        'Fila 19: la detención debe ser Sí, No o Parcial (dice "A veces").',
+        "Fila 19: el código MPO-011 está repetido.",
+        "Pauta A: esta máquina ya tiene una cartilla con ese nombre.",
+        "Pauta D: indica la equivalencia en giros o una frecuencia conocida (quincenal, mensual, semestral, anual…).",
+      ]);
+      expect(await db.select().from(schema.pautas)).toHaveLength(3);
+      await expect(importarCartilla(db, mec, maquina, filas)).rejects.toThrow("No tienes permiso");
+    });
+  });
+
+  describe("una cartilla mayor incluye a las de menor intervalo", () => {
+    const cartilla = (nombre: string, intervalo: number, codigos: string[]) =>
+      crearPauta(db, jefe, {
+        activoId: maquina, nombre, tipo: "GIROS", intervalo, especialidadId: espMec, baseGiros: 0,
+        tareas: codigos.map((codigo) => ({ codigo, descripcion: `Tarea ${codigo}`, operador: false, especialidadId: null })),
+      });
+    const lista = (cicloId: number) =>
+      db.select().from(schema.actividadesCiclo).where(eq(schema.actividadesCiclo.cicloId, cicloId)).orderBy(schema.actividadesCiclo.orden);
+
+    it("al liberarse trae las tareas de las menores, sin repetir códigos, y las menores quedan dentro de ella", async () => {
+      const chica = await cartilla("Cartilla 100.000", 100_000, ["T-1", "T-2"]);
+      const media = await cartilla("Cartilla 500.000", 500_000, ["T-2", "T-3"]);
+      const grande = await cartilla("Cartilla 2.000.000", 2_000_000, ["T-4"]);
+      // A 1.600.000 (80 %) se libera la de 2.000.000. Las menores ya se incumplieron varias veces antes.
+      await db.update(schema.ciclosPauta).set({ baseGiros: 1_550_000, liberacionGiros: 1_630_000, objetivoGiros: 1_650_000, limiteGiros: 1_670_000 }).where(eq(schema.ciclosPauta.pautaId, chica));
+      await db.update(schema.ciclosPauta).set({ baseGiros: 1_500_000, liberacionGiros: 1_900_000, objetivoGiros: 2_000_000, limiteGiros: 2_100_000 }).where(eq(schema.ciclosPauta.pautaId, media));
+      await leer(1_600_000);
+      const cGrande = await abierto(grande);
+      expect(cGrande.estado).toBe("LIBERADA");
+      expect((await lista(cGrande.id)).map((a) => [a.codigo, a.pautaOrigen])).toEqual([
+        ["T-4", null],
+        ["T-2", "Cartilla 500.000"],
+        ["T-3", "Cartilla 500.000"],
+        ["T-1", "Cartilla 100.000"],
+      ]);
+      expect((await abierto(chica)).incluidoEnCicloId).toBe(cGrande.id);
+      expect((await abierto(media)).incluidoEnCicloId).toBe(cGrande.id);
+      // Mientras estén incluidas no se liberan ni se incumplen por separado, aunque pase su límite.
+      await leer(1_700_000);
+      expect((await ciclos(chica)).map((c) => c.estado)).toEqual(["PROGRAMADA"]);
+      await expect(finalizarCiclo(db, mec, (await abierto(chica)).id)).rejects.toThrow("todavía no está liberada");
+    });
+
+    it("al ejecutar la mayor, las menores quedan ejecutadas y todas parten del mismo contador", async () => {
+      const chica = await cartilla("Cartilla 100.000", 100_000, ["T-1"]);
+      const grande = await cartilla("Cartilla 2.000.000", 2_000_000, ["T-4"]);
+      await db.update(schema.ciclosPauta).set({ baseGiros: 1_950_000, liberacionGiros: 2_030_000, objetivoGiros: 2_050_000, limiteGiros: 2_070_000 }).where(eq(schema.ciclosPauta.pautaId, chica));
+      await leer(2_040_000);
+      // La menor ya estaba liberada por su cuenta cuando... la mayor la absorbió al liberarse antes (1.600.000).
+      const cGrande = await abierto(grande);
+      await expect(finalizarCiclo(db, mec, (await abierto(chica)).id)).rejects.toThrow("incluida en «Cartilla 2.000.000»");
+      await completar(cGrande.id);
+      await finalizarCiclo(db, mec, cGrande.id, { giros: 2_045_000 }, dia("2026-11-12"));
+      const [hechaChica, nuevaChica] = await ciclos(chica);
+      expect(hechaChica).toMatchObject({ estado: "EJECUTADA", girosReales: 2_045_000, ejecutadoPor: mec.id, observaciones: "Incluida en «Cartilla 2.000.000»." });
+      expect(nuevaChica).toMatchObject({ estado: "PROGRAMADA", baseGiros: 2_045_000, objetivoGiros: 2_145_000, incluidoEnCicloId: null });
+      expect(await abierto(grande)).toMatchObject({ estado: "PROGRAMADA", baseGiros: 2_045_000, objetivoGiros: 4_045_000 });
+      // Después cada una sigue su propio ritmo: la de 100.000 se libera sola a 2.125.000.
+      await leer(2_125_000);
+      expect((await abierto(chica)).estado).toBe("LIBERADA");
+      expect((await abierto(grande)).estado).toBe("PROGRAMADA");
+    });
+
+    it("se puede desactivar la inclusión, y solo aplica entre cartillas del mismo tipo", async () => {
+      const chica = await cartilla("Cartilla 100.000", 100_000, ["T-1"]);
+      const grande = await cartilla("Cartilla 2.000.000", 2_000_000, ["T-4"]);
+      const porTiempo = await crearPauta(db, jefe, { activoId: maquina, nombre: "Semanal", tipo: "TIEMPO", intervalo: 7, especialidadId: espMec, actividades: "Revisar" });
+      await actualizarPauta(db, jefe, grande, { nombre: "Cartilla 2.000.000", intervalo: 2_000_000, especialidadId: espMec, activa: true, incluyeInferiores: false });
+      await liberarAnticipada(db, jefe, (await abierto(grande)).id);
+      expect((await lista((await abierto(grande)).id)).map((a) => a.codigo)).toEqual(["T-4"]);
+      expect((await abierto(chica)).incluidoEnCicloId).toBeNull();
+      expect((await abierto(porTiempo)).incluidoEnCicloId).toBeNull();
+    });
   });
 
   describe("Metrics", () => {

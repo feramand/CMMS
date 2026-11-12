@@ -30,6 +30,7 @@ export function listarSolicitudes(filtro?: SQL, limite = 200) {
       comentario: solicitudes.comentario,
       creadaEn: solicitudes.creadaEn,
       detenidaEn: solicitudes.detenidaEn,
+      maquinaDetenida: solicitudes.maquinaDetenida,
       tomadaEn: solicitudes.tomadaEn,
       cerradaEn: solicitudes.cerradaEn,
       solucion: solicitudes.solucion,

@@ -106,7 +106,7 @@ export default async function DetalleSolicitud({ params, searchParams }: Props) 
               {s.origenReal ? ` → ${nombreCategoria(s.origenReal)}` : ""}
             </Dato>
             <Dato etiqueta="Origen">{ORIGEN[s.origen]}</Dato>
-            {s.detenidaEn && <Dato etiqueta="Máquina detenida">{fechaHora(s.detenidaEn)}</Dato>}
+            <Dato etiqueta="Máquina detenida">{s.maquinaDetenida ? (s.detenidaEn ? `Sí, desde ${fechaHora(s.detenidaEn)}` : "Sí") : "No"}</Dato>
             <Dato etiqueta="Solicitud creada">{fechaHora(s.creadaEn)}</Dato>
             <Dato etiqueta="Reportó">{s.creador ?? "—"}</Dato>
             <Dato etiqueta="A cargo">{s.responsable ?? "Sin asignar"}</Dato>

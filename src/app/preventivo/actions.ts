@@ -52,6 +52,7 @@ export async function accionActualizarPauta(formData: FormData) {
       pctLiberacion: numero(formData.get("pctLiberacion")),
       pctLimite: numero(formData.get("pctLimite")),
       activa: formData.get("activa") === "si",
+      incluyeInferiores: formData.get("incluyeInferiores") !== "no",
     }),
   );
 }
@@ -59,7 +60,9 @@ export async function accionActualizarPauta(formData: FormData) {
 export async function accionAgregarActividad(formData: FormData) {
   const actor = await exigirSesion();
   const pautaId = entero(formData.get("pautaId"));
-  await ejecutar(`/admin/preventivo/${pautaId}`, () => agregarActividad(db, actor, pautaId, texto(formData.get("descripcion"))));
+  await ejecutar(`/admin/preventivo/${pautaId}`, () =>
+    agregarActividad(db, actor, pautaId, texto(formData.get("descripcion")), texto(formData.get("grupo"))),
+  );
 }
 
 export async function accionQuitarActividad(formData: FormData) {
@@ -95,13 +98,17 @@ export async function accionMarcarActividad(formData: FormData) {
   const actor = await exigirSesion();
   const cicloId = entero(formData.get("cicloId"));
   const estado = texto(formData.get("estado"));
-  await ejecutar(`/pauta/${cicloId}`, () =>
+  // Vuelve a la misma cartilla conservando los filtros elegidos.
+  const vuelta = texto(formData.get("vuelta"));
+  await ejecutar(vuelta.startsWith(`/pauta/${cicloId}`) ? vuelta : `/pauta/${cicloId}`, () =>
     marcarActividad(
       db,
       actor,
       entero(formData.get("id")),
       estado === "HECHA" || estado === "NO_REALIZADA" ? estado : "PENDIENTE",
       texto(formData.get("nota")),
+      undefined,
+      texto(formData.get("motivo")),
     ),
   );
 }

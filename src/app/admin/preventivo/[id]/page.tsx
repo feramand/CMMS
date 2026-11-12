@@ -34,7 +34,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
   const [p] = await listarPautas(eq(pautas.id, id));
   if (!p) notFound();
   const [[propia], actividades, historial, listaEsp, generales] = await Promise.all([
-    db.select({ lib: pautas.pctLiberacion, lim: pautas.pctLimite }).from(pautas).where(eq(pautas.id, id)),
+    db.select({ lib: pautas.pctLiberacion, lim: pautas.pctLimite, incluye: pautas.incluyeInferiores, frecuencia: pautas.frecuencia }).from(pautas).where(eq(pautas.id, id)),
     db.select().from(actividadesPauta).where(and(eq(actividadesPauta.pautaId, id), eq(actividadesPauta.activa, true))).orderBy(asc(actividadesPauta.orden)),
     db
       .select({ ciclo: ciclosPauta, quien: usuarios.nombre })
@@ -59,7 +59,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
               <Link href={`/admin/activos/${p.activoId}`} className="text-marca underline">
                 {p.activo}
               </Link>{" "}
-              · {p.especialidad} · {intervaloTexto(p.tipo, p.intervalo)}
+              · {p.especialidad} · {intervaloTexto(p.tipo, p.intervalo, p.unidad)}
             </p>
           </div>
           <Link href="/admin/preventivo" className="text-marca underline">
@@ -80,11 +80,15 @@ export default async function DetallePauta({ params, searchParams }: Props) {
               <Dato etiqueta="Se libera">{p.resumen.liberacion}</Dato>
               <Dato etiqueta="Objetivo">{p.resumen.objetivo}</Dato>
               <Dato etiqueta="Incumplida si llega a">{p.resumen.limite}</Dato>
-              {esGiros && <Dato etiqueta="Contador actual">{n(p.giros)} giros</Dato>}
+              {esGiros && <Dato etiqueta="Contador actual">{n(p.giros)} {p.unidad}</Dato>}
               {p.ciclo.liberadoEn && <Dato etiqueta="Liberada el">{fechaHora(p.ciclo.liberadoEn)}</Dato>}
               {p.ciclo.responsable && <Dato etiqueta="La ejecuta">{p.ciclo.responsable}</Dato>}
             </div>
-            {p.ciclo.estado === "PROGRAMADA" && p.activa ? (
+            {p.incluidaEn ? (
+              <Link href={`/pauta/${p.incluidaEn.cicloId}`} className="text-marca underline">
+                Sus tareas se ejecutan dentro de {p.incluidaEn.nombre}, que ya está liberada.
+              </Link>
+            ) : p.ciclo.estado === "PROGRAMADA" && p.activa ? (
               <form action={accionLiberar}>
                 <input type="hidden" name="cicloId" value={p.ciclo.id} />
                 <input type="hidden" name="pautaId" value={id} />
@@ -104,13 +108,23 @@ export default async function DetallePauta({ params, searchParams }: Props) {
         )}
 
         <section className={`${tarjeta} flex flex-col gap-3`}>
-          <h2 className="text-lg font-bold">Checklist · {actividades.length} actividades</h2>
+          <h2 className="text-lg font-bold">Cartilla · {actividades.length} actividades</h2>
           {actividades.length === 0 && <p className="text-slate-600">Sin actividades: la pauta se finaliza sin checklist.</p>}
           <ol className="flex flex-col gap-1">
             {actividades.map((a, i) => (
               <li key={a.id} className="flex items-center justify-between gap-2 border-t border-slate-200 pt-1">
                 <span>
-                  {i + 1}. {a.descripcion}
+                  {i + 1}. {a.codigo ? `${a.codigo} · ` : ""}
+                  <span className="whitespace-pre-line">{a.descripcion}</span>{" "}
+                  <span className="text-sm text-slate-600">
+                    ·{" "}
+                    {a.operador
+                      ? `Operador${a.especialidadId ? ` / ${listaEsp.find((e) => e.id === a.especialidadId)?.nombre}` : ""}`
+                      : (listaEsp.find((e) => e.id === (a.especialidadId ?? p.especialidadId))?.nombre ?? p.especialidad)}
+                    {[a.zona, a.subsistema, a.componente].filter(Boolean).length > 0 ? ` · ${[a.zona, a.subsistema, a.componente].filter(Boolean).join(" › ")}` : ""}
+                    {a.detencion ? ` · detención: ${a.detencion === "SI" ? "sí" : a.detencion === "NO" ? "no" : "parcial"}` : ""}
+                    {a.minutos !== null ? ` · ${a.minutos} min` : ""}
+                  </span>
                 </span>
                 <form action={accionQuitarActividad}>
                   <input type="hidden" name="pautaId" value={id} />
@@ -125,11 +139,25 @@ export default async function DetallePauta({ params, searchParams }: Props) {
           <form action={accionAgregarActividad} className="flex flex-wrap gap-2">
             <input type="hidden" name="pautaId" value={id} />
             <input name="descripcion" required aria-label="Nueva actividad" placeholder="Nueva actividad" className={`${campo} max-w-md`} />
+            <select name="grupo" aria-label="Quién la hace" defaultValue="" className={`${campo} max-w-56`}>
+              <option value="">{p.especialidad} (responsable)</option>
+              <option value="OPERADOR">Operador</option>
+              {listaEsp
+                .filter((e) => e.id !== p.especialidadId)
+                .map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.nombre}
+                  </option>
+                ))}
+            </select>
             <button type="submit" className={botonPrimario}>
               Agregar actividad
             </button>
           </form>
-          <p className="text-sm text-slate-600">Los cambios valen desde la próxima liberación; una pauta ya liberada conserva su checklist.</p>
+          <p className="text-sm text-slate-600">
+            Una sola cartilla reúne las actividades de todos: al liberarse, cada grupo ve y marca solo las suyas, y la
+            cartilla se finaliza cuando todos terminan. Los cambios valen desde la próxima liberación.
+          </p>
         </section>
 
         <details className={tarjeta} open={Boolean(error)}>
@@ -141,7 +169,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
               <input name="nombre" required defaultValue={p.nombre} className={campo} />
             </label>
             <label className="flex flex-col gap-1 text-sm font-semibold">
-              Intervalo en {esGiros ? "giros" : "días"}
+              Intervalo en {esGiros ? p.unidad : "días"}
               <input name="intervalo" required inputMode="numeric" defaultValue={p.intervalo} className={campo} />
             </label>
             <label className="flex flex-col gap-1 text-sm font-semibold">
@@ -169,6 +197,13 @@ export default async function DetallePauta({ params, searchParams }: Props) {
               Incumplida propia (%)
               <input name="pctLimite" inputMode="numeric" defaultValue={propia?.lim ?? ""} placeholder={`General: ${generales.limite}`} className={campo} />
             </label>
+            <label className="flex flex-col gap-1 text-sm font-semibold sm:col-span-2">
+              Cartillas de menor intervalo de esta máquina
+              <select name="incluyeInferiores" defaultValue={propia?.incluye ? "si" : "no"} className={campo}>
+                <option value="si">Incluirlas: al liberarse, esta cartilla trae también sus tareas</option>
+                <option value="no">No incluirlas: cada cartilla se ejecuta por separado</option>
+              </select>
+            </label>
             <p className="text-sm text-slate-600 sm:col-span-2">
               Deja los dos porcentajes vacíos para usar los generales. Si cambias el intervalo o los porcentajes, el
               ciclo actual se recalcula desde su misma base.
@@ -190,7 +225,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
                   <th className="p-2 font-semibold">Estado</th>
                   <th className="p-2 font-semibold">Cerrada</th>
                   <th className="p-2 font-semibold">Ejecutó</th>
-                  {esGiros && <th className="p-2 font-semibold">Giros reales</th>}
+                  {esGiros && <th className="p-2 font-semibold">Contador real</th>}
                 </tr>
               </thead>
               <tbody>

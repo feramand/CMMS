@@ -32,11 +32,12 @@ export function FichaTecnica({ m, tipo }: { m: Activo; tipo: string | null }) {
       </Dato>
       <Dato etiqueta="Garantía">{v(m.garantia)}</Dato>
       <Dato etiqueta="Código en Metrics">{v(m.codigoMetrics)}</Dato>
-      <Dato etiqueta="Giros acumulados">
-        {m.girosAcumulados === null ? "—" : m.girosAcumulados.toLocaleString("es-CL")}
+      <Dato etiqueta="Contador acumulado">
+        {m.girosAcumulados === null ? "—" : `${m.girosAcumulados.toLocaleString("es-CL")} ${m.unidadContador}`}
       </Dato>
-      <Dato etiqueta="Última preventiva">{fecha(m.ultimaPreventiva)}</Dato>
-      <Dato etiqueta="Último MP">{v(m.ultimoMp)}</Dato>
+      <Dato etiqueta="Último MP">
+        {m.ultimaPreventiva ? `${fecha(m.ultimaPreventiva)}${m.ultimoMp ? ` · ${m.ultimoMp}` : ""}` : "—"}
+      </Dato>
     </div>
   );
 }

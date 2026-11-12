@@ -138,13 +138,15 @@ async function columnasMp(): Promise<Columna[]> {
   ]);
   const tarjeta = (p: (typeof lista)[number], pie: string, alerta?: string): Tarjeta => ({
     href: p.ciclo?.estado === "LIBERADA" ? `/pauta/${p.ciclo.id}` : `/admin/preventivo/${p.id}`,
-    folio: `Pauta ${intervaloTexto(p.tipo, p.intervalo)} · ${p.especialidad}`,
+    folio: `Pauta ${intervaloTexto(p.tipo, p.intervalo, p.unidad)} · ${p.especialidad}`,
     titulo: p.activo,
     detalle: `${p.nombre} · ${p.resumen?.avance ?? 0} % del intervalo`,
     pie,
     alerta,
   });
-  const liberadas = lista.filter((p) => p.ciclo?.estado === "LIBERADA");
+  // Las cartillas incluidas en una mayor ya liberada no se muestran aparte.
+  const propias = lista.filter((p) => !p.incluidaEn);
+  const liberadas = propias.filter((p) => p.ciclo?.estado === "LIBERADA");
   return [
     {
       nombre: "Pendientes",
@@ -154,7 +156,7 @@ async function columnasMp(): Promise<Columna[]> {
     },
     {
       nombre: "Planificadas",
-      tarjetas: lista.filter((p) => p.ciclo?.estado === "PROGRAMADA").map((p) => tarjeta(p, `Se libera: ${p.resumen!.liberacion}`)),
+      tarjetas: propias.filter((p) => p.ciclo?.estado === "PROGRAMADA").map((p) => tarjeta(p, `Se libera: ${p.resumen!.liberacion}`)),
     },
     {
       nombre: "En proceso",

@@ -51,7 +51,7 @@ async function InicioTecnico({ usuario }: { usuario: UsuarioSesion }) {
     .where(eq(fichasTecnico.usuarioId, usuario.id));
   const categorias = ficha ? categoriasDe(ficha.codigo) : [];
   const [misPautas, pendientes, misSat, misOt, apoyosSat, apoyosOt] = await Promise.all([
-    ficha ? pautasLiberadas(ficha.especialidadId) : [],
+    ficha ? pautasLiberadas({ operador: false, especialidadId: ficha.especialidadId }) : [],
     categorias.length
       ? listarSolicitudes(and(eq(solicitudes.estado, "PENDIENTE"), inArray(solicitudes.categoria, categorias)))
       : [],
@@ -183,11 +183,17 @@ async function InicioTecnico({ usuario }: { usuario: UsuarioSesion }) {
                 {p.nombre} · {p.resumen!.avance} % del intervalo
               </span>
               <span className="text-sm text-slate-600">
-                Límite: {p.resumen!.limite}
-                {p.ciclo!.responsable ? ` · la ejecuta ${p.ciclo!.responsable}` : ""}
+                {p.miParte.total > 0 ? `Tu parte: ${p.miParte.hechas} de ${p.miParte.total} · ` : ""}
+                límite {p.resumen!.limite}
               </span>
             </span>
-            {p.resumen!.pasoObjetivo ? <Chip tono="rojo">Próxima a vencer</Chip> : <Chip tono="ambar">Liberada</Chip>}
+            {p.miParte.total > 0 && p.miParte.hechas === p.miParte.total ? (
+              <Chip tono="verde">Tu parte lista</Chip>
+            ) : p.resumen!.pasoObjetivo ? (
+              <Chip tono="rojo">Próxima a vencer</Chip>
+            ) : (
+              <Chip tono="ambar">Liberada</Chip>
+            )}
           </Link>
         ))}
       </section>
@@ -197,7 +203,35 @@ async function InicioTecnico({ usuario }: { usuario: UsuarioSesion }) {
 
 async function InicioOperador({ usuario }: { usuario: UsuarioSesion }) {
   const mias = await listarSolicitudes(eq(solicitudes.creadaPor, usuario.id), 30);
+  const misPautas = await pautasLiberadas({ operador: true });
   return (
+    <>
+      {misPautas.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <h2 className={titulo}>Cartillas con actividades de operador · {misPautas.length}</h2>
+        {misPautas.map((p) => (
+          <Link key={p.id} href={`/pauta/${p.ciclo!.id}`} className={`${tarjeta} flex items-center justify-between gap-2`}>
+            <span className="flex flex-col">
+              <span className="text-lg font-semibold">{p.activo}</span>
+              <span className="text-slate-600">
+                {p.nombre} · {p.resumen!.avance} % del intervalo
+              </span>
+              <span className="text-sm text-slate-600">
+                {p.miParte.total > 0 ? `Tu parte: ${p.miParte.hechas} de ${p.miParte.total} · ` : ""}
+                límite {p.resumen!.limite}
+              </span>
+            </span>
+            {p.miParte.total > 0 && p.miParte.hechas === p.miParte.total ? (
+              <Chip tono="verde">Tu parte lista</Chip>
+            ) : p.resumen!.pasoObjetivo ? (
+              <Chip tono="rojo">Próxima a vencer</Chip>
+            ) : (
+              <Chip tono="ambar">Liberada</Chip>
+            )}
+          </Link>
+        ))}
+        </section>
+      )}
     <section className="flex flex-col gap-2">
       <h2 className={titulo}>Mis solicitudes</h2>
       {mias.length === 0 && <p className="text-slate-600">Todavía no has reportado fallas.</p>}
@@ -222,6 +256,7 @@ async function InicioOperador({ usuario }: { usuario: UsuarioSesion }) {
         </Link>
       ))}
     </section>
+    </>
   );
 }
 
