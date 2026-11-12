@@ -25,6 +25,9 @@ services:
     environment:
       DATABASE_URL: postgres://cmms:${POSTGRES_PASSWORD}@db:5432/cmms
       SESSION_SECRET: ${SESSION_SECRET:?Falta SESSION_SECRET en .env}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
       ADMIN_RUT: ${ADMIN_RUT:-}
       ADMIN_NOMBRE: ${ADMIN_NOMBRE:-}
       ADMIN_CLAVE: ${ADMIN_CLAVE:-}

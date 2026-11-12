@@ -1,6 +1,8 @@
 import "server-only";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
+import { despacharPendientes } from "./push";
 import { ErrorDeNegocio } from "./usuarios-core";
 
 /**
@@ -19,6 +21,8 @@ export async function ejecutar(
     const separador = origen.includes("?") ? "&" : "?";
     redirect(`${origen}${separador}error=${encodeURIComponent(e.message)}`);
   }
+  // Los avisos generados por la acción se envían al celular una vez respondida la solicitud.
+  after(despacharPendientes);
   revalidatePath("/", "layout");
   redirect(destino);
 }

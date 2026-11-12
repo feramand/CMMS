@@ -1,11 +1,13 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 import Link from "next/link";
+import { ActivarAvisos } from "@/componentes/activar-avisos";
 import { Encabezado } from "@/componentes/encabezado";
 import { tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
 import { notificaciones } from "@/db/schema";
 import { exigirSesion } from "@/lib/dal";
 import { rutaInicio } from "@/lib/perfiles";
+import { clavePublicaPush } from "@/lib/push";
 import { fechaHora } from "@/lib/tiempo";
 
 export default async function Avisos() {
@@ -31,6 +33,7 @@ export default async function Avisos() {
             Volver
           </Link>
         </div>
+        <ActivarAvisos clavePublica={clavePublicaPush()} />
         {lista.length === 0 && <p className="text-slate-600">No tienes avisos.</p>}
         {lista.map((n) => (
           <Link

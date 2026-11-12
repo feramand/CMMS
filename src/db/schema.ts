@@ -76,6 +76,15 @@ export const fichasTecnico = pgTable("fichas_tecnico", {
   nivel: nivelEnum("nivel"),
   enTurno: boolean("en_turno").notNull().default(false),
   turnoDesde: timestamp("turno_desde", { withTimezone: true }),
+  // Horario semanal de los técnicos de horario fijo. Días: 1 = lunes … 7 = domingo, separados por coma.
+  diasLaborales: text("dias_laborales"),
+  horaEntrada: time("hora_entrada"),
+  horaSalida: time("hora_salida"),
+});
+
+export const feriados = pgTable("feriados", {
+  fecha: date("fecha").primaryKey(),
+  nombre: text("nombre").notNull(),
 });
 
 export const parametros = pgTable("parametros", {
@@ -292,6 +301,34 @@ export const notificaciones = pgTable("notificaciones", {
   enlace: text("enlace"),
   creadaEn: timestamp("creada_en", { withTimezone: true }).notNull().defaultNow(),
   leidaEn: timestamp("leida_en", { withTimezone: true }),
+  // Momento en que se intentó enviar al celular; null = todavía no despachada.
+  pushEnviadaEn: timestamp("push_enviada_en", { withTimezone: true }),
+});
+
+// Dispositivos donde cada persona activó las notificaciones push.
+export const suscripcionesPush = pgTable("suscripciones_push", {
+  id: serial("id").primaryKey(),
+  usuarioId: integer("usuario_id")
+    .notNull()
+    .references(() => usuarios.id, { onDelete: "cascade" }),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  creadaEn: timestamp("creada_en", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Fotos adjuntas a una solicitud, una orden de trabajo o una solicitud de repuesto.
+export const adjuntos = pgTable("adjuntos", {
+  id: serial("id").primaryKey(),
+  solicitudId: integer("solicitud_id").references(() => solicitudes.id, { onDelete: "cascade" }),
+  otId: integer("ot_id").references(() => ordenesTrabajo.id, { onDelete: "cascade" }),
+  repuestoId: integer("repuesto_id").references(() => solicitudesRepuesto.id, { onDelete: "cascade" }),
+  // Nombre del archivo en la carpeta de adjuntos (aleatorio; nunca el nombre original).
+  archivo: text("archivo").notNull().unique(),
+  tipo: text("tipo").notNull(),
+  bytes: integer("bytes").notNull(),
+  subidoPor: integer("subido_por").references(() => usuarios.id),
+  creadoEn: timestamp("creado_en", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type Usuario = typeof usuarios.$inferSelect;

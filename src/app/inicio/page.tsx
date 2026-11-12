@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import Link from "next/link";
 import { accionResolverRepuesto, accionTomar } from "@/app/trabajos/actions";
+import { ActivarAvisos } from "@/componentes/activar-avisos";
 import { Encabezado } from "@/componentes/encabezado";
 import { AvisoError, Chip, ChipOt, ChipSat, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
@@ -18,6 +19,7 @@ import type { UsuarioSesion } from "@/lib/auth-core";
 import { categoriasDe, nombreCategoria } from "@/lib/categorias";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
 import { exigirPerfil } from "@/lib/dal";
+import { clavePublicaPush } from "@/lib/push";
 import { fechaHora, minutosEntre } from "@/lib/tiempo";
 import { cambiarTurno } from "./actions";
 
@@ -258,6 +260,7 @@ export default async function InicioOperativo({ searchParams }: Props) {
       <Encabezado usuario={usuario} />
       <main className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-4 p-4">
         <AvisoError mensaje={error} />
+        <ActivarAvisos clavePublica={clavePublicaPush()} />
         {usuario.perfil === "OPERADOR" && (
           <Link href="/reportar" className="flex h-20 items-center justify-center rounded-xl bg-amber-700 text-2xl font-bold text-white">
             Reportar falla
