@@ -19,11 +19,15 @@ export async function proxy(request: NextRequest) {
     }
   }
   if (!valida && !esLogin) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    const ingreso = new URL("/login", request.url);
+    // Quien escanea el QR de una máquina sin sesión vuelve a esa ficha después de ingresar.
+    if (/^\/activo\/\d+$/.test(pathname)) ingreso.searchParams.set("volver", pathname);
+    return NextResponse.redirect(ingreso);
   }
   return NextResponse.next();
 }
 
+// Las direcciones de /api/metrics no usan sesión: las protege la clave del conector.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|logo-print-garage.png|icon.png|iconos/).*)"],
+  matcher: ["/((?!api/metrics|_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|logo-print-garage.png|icon.png|iconos/).*)"],
 };

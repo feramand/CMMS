@@ -1,16 +1,17 @@
-import { count, inArray } from "drizzle-orm";
+import { count, desc, eq, inArray } from "drizzle-orm";
 import Link from "next/link";
 import { Encabezado } from "@/componentes/encabezado";
 import { Chip } from "@/componentes/ui";
 import { db } from "@/db";
-import { solicitudesRepuesto } from "@/db/schema";
+import { activos, ciclosPauta, pautas, solicitudesRepuesto, usuarios } from "@/db/schema";
 import { nombreCategoria } from "@/lib/categorias";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
+import { intervaloTexto, listarPautas } from "@/lib/consultas-pautas";
 import { exigirPerfil } from "@/lib/dal";
 import { nombreEstadoOt } from "@/lib/ot-core";
 import { duracion, fechaHora, minutosEntre } from "@/lib/tiempo";
 
-type Tarjeta = { href: string; folio: string; titulo: string; detalle: string; pie: string; repuestos?: boolean };
+type Tarjeta = { href: string; folio: string; titulo: string; detalle: string; pie: string; repuestos?: boolean; alerta?: string };
 type Columna = { nombre: string; tarjetas: Tarjeta[]; nota?: string };
 
 const PESTANAS = [
@@ -122,9 +123,63 @@ async function columnasOt(): Promise<Columna[]> {
   ];
 }
 
+async function columnasMp(): Promise<Columna[]> {
+  const [lista, cerrados] = await Promise.all([
+    listarPautas(eq(pautas.activa, true)),
+    db
+      .select({ ciclo: ciclosPauta, pauta: pautas.nombre, pautaId: pautas.id, tipo: pautas.tipo, intervalo: pautas.intervalo, activo: activos.nombre, quien: usuarios.nombre })
+      .from(ciclosPauta)
+      .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+      .innerJoin(activos, eq(activos.id, pautas.activoId))
+      .leftJoin(usuarios, eq(usuarios.id, ciclosPauta.ejecutadoPor))
+      .where(inArray(ciclosPauta.estado, ["EJECUTADA", "INCUMPLIDA"]))
+      .orderBy(desc(ciclosPauta.cerradoEn))
+      .limit(100),
+  ]);
+  const tarjeta = (p: (typeof lista)[number], pie: string, alerta?: string): Tarjeta => ({
+    href: p.ciclo?.estado === "LIBERADA" ? `/pauta/${p.ciclo.id}` : `/admin/preventivo/${p.id}`,
+    folio: `Pauta ${intervaloTexto(p.tipo, p.intervalo)} · ${p.especialidad}`,
+    titulo: p.activo,
+    detalle: `${p.nombre} · ${p.resumen?.avance ?? 0} % del intervalo`,
+    pie,
+    alerta,
+  });
+  const liberadas = lista.filter((p) => p.ciclo?.estado === "LIBERADA");
+  return [
+    {
+      nombre: "Pendientes",
+      tarjetas: liberadas
+        .filter((p) => !p.ciclo!.iniciadoEn)
+        .map((p) => tarjeta(p, `Objetivo ${p.resumen!.objetivo} · límite ${p.resumen!.limite}`, p.resumen!.pasoObjetivo ? "Próxima a vencer" : undefined)),
+    },
+    {
+      nombre: "Planificadas",
+      tarjetas: lista.filter((p) => p.ciclo?.estado === "PROGRAMADA").map((p) => tarjeta(p, `Se libera: ${p.resumen!.liberacion}`)),
+    },
+    {
+      nombre: "En proceso",
+      tarjetas: liberadas
+        .filter((p) => p.ciclo!.iniciadoEn)
+        .map((p) => tarjeta(p, `${p.ciclo!.responsable ?? "Sin responsable"} · iniciada ${fechaHora(p.ciclo!.iniciadoEn)}`, p.resumen!.pasoObjetivo ? "Próxima a vencer" : undefined)),
+    },
+    {
+      nombre: "Terminadas",
+      tarjetas: cerrados
+        .filter((c) => reciente(c.ciclo.cerradoEn))
+        .map((c) => ({
+          href: c.ciclo.estado === "EJECUTADA" ? `/pauta/${c.ciclo.id}` : `/admin/preventivo/${c.pautaId}`,
+          folio: `Pauta ${intervaloTexto(c.tipo, c.intervalo)}`,
+          titulo: c.activo,
+          detalle: c.pauta,
+          pie: c.ciclo.estado === "EJECUTADA" ? `${c.quien ?? "—"} · ${fechaHora(c.ciclo.cerradoEn)}` : `Pasó el límite el ${fechaHora(c.ciclo.cerradoEn)}`,
+          alerta: c.ciclo.estado === "INCUMPLIDA" ? "Incumplida" : undefined,
+        })),
+    },
+  ];
+}
+
 const PROXIMAMENTE: Record<string, string> = {
   rep: "Repuestos y compras se activa con las etapas 3 y 4 (bodega y compras).",
-  mp: "Preventivo se activa con la etapa 2 (pautas por tiempo y por giros).",
 };
 
 export default async function Tablero({ searchParams }: { searchParams: Promise<{ tipo?: string }> }) {
@@ -136,7 +191,9 @@ export default async function Tablero({ searchParams }: { searchParams: Promise<
       ? await columnasSat()
       : tipo === "ot"
         ? await columnasOt()
-        : ["Pendientes", "Planificadas", "En proceso", "Terminadas"].map((nombre) => ({ nombre, tarjetas: [] }) as Columna);
+        : tipo === "mp"
+          ? await columnasMp()
+          : ["Pendientes", "Planificadas", "En proceso", "Terminadas"].map((nombre) => ({ nombre, tarjetas: [] }) as Columna);
 
   return (
     <>
@@ -175,13 +232,18 @@ export default async function Tablero({ searchParams }: { searchParams: Promise<
                   </span>
                 </div>
                 {c.tarjetas.map((k) => (
-                  <Link key={k.href} href={k.href} className="flex flex-col gap-1.5 rounded-lg border border-slate-300 bg-white p-3">
+                  <Link key={`${k.href}-${k.folio}-${k.pie}`} href={k.href} className="flex flex-col gap-1.5 rounded-lg border border-slate-300 bg-white p-3">
                     <span className="text-sm font-semibold text-slate-600">{k.folio}</span>
                     <span className="text-base font-semibold">{k.titulo}</span>
                     <span className="text-sm text-slate-600">{k.detalle}</span>
                     {k.repuestos && (
                       <span>
                         <Chip tono="ambar">Pendiente de repuestos</Chip>
+                      </span>
+                    )}
+                    {k.alerta && (
+                      <span>
+                        <Chip tono="rojo">{k.alerta}</Chip>
                       </span>
                     )}
                     <span className="text-sm text-slate-600">{k.pie}</span>

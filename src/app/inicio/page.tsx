@@ -20,6 +20,7 @@ import {
 import type { UsuarioSesion } from "@/lib/auth-core";
 import { categoriasDe, nombreCategoria } from "@/lib/categorias";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
+import { pautasLiberadas } from "@/lib/consultas-pautas";
 import { exigirPerfil } from "@/lib/dal";
 import { clavePublicaPush } from "@/lib/push";
 import { fechaHora, minutosEntre } from "@/lib/tiempo";
@@ -42,13 +43,15 @@ async function InicioTecnico({ usuario }: { usuario: UsuarioSesion }) {
       modalidad: fichasTecnico.modalidad,
       enTurno: fichasTecnico.enTurno,
       especialidad: especialidades.nombre,
+      especialidadId: especialidades.id,
       codigo: especialidades.codigo,
     })
     .from(fichasTecnico)
     .innerJoin(especialidades, eq(especialidades.id, fichasTecnico.especialidadId))
     .where(eq(fichasTecnico.usuarioId, usuario.id));
   const categorias = ficha ? categoriasDe(ficha.codigo) : [];
-  const [pendientes, misSat, misOt, apoyosSat, apoyosOt] = await Promise.all([
+  const [misPautas, pendientes, misSat, misOt, apoyosSat, apoyosOt] = await Promise.all([
+    ficha ? pautasLiberadas(ficha.especialidadId) : [],
     categorias.length
       ? listarSolicitudes(and(eq(solicitudes.estado, "PENDIENTE"), inArray(solicitudes.categoria, categorias)))
       : [],
@@ -168,6 +171,25 @@ async function InicioTecnico({ usuario }: { usuario: UsuarioSesion }) {
       <section className="flex flex-col gap-2">
         <h2 className={titulo}>Pautas preventivas</h2>
         <p className="text-slate-600">Disponible en la etapa 2.</p>
+      </section>
+      <section className="flex flex-col gap-2">
+        <h2 className={titulo}>Pautas preventivas pendientes · {misPautas.length}</h2>
+        {misPautas.length === 0 && <p className="text-slate-600">No hay pautas liberadas.</p>}
+        {misPautas.map((p) => (
+          <Link key={p.id} href={`/pauta/${p.ciclo!.id}`} className={`${tarjeta} flex items-center justify-between gap-2`}>
+            <span className="flex flex-col">
+              <span className="text-lg font-semibold">{p.activo}</span>
+              <span className="text-slate-600">
+                {p.nombre} · {p.resumen!.avance} % del intervalo
+              </span>
+              <span className="text-sm text-slate-600">
+                Límite: {p.resumen!.limite}
+                {p.ciclo!.responsable ? ` · la ejecuta ${p.ciclo!.responsable}` : ""}
+              </span>
+            </span>
+            {p.resumen!.pasoObjetivo ? <Chip tono="rojo">Próxima a vencer</Chip> : <Chip tono="ambar">Liberada</Chip>}
+          </Link>
+        ))}
       </section>
     </>
   );

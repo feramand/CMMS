@@ -144,6 +144,16 @@ describe.skipIf(!url)("solicitudes y órdenes de trabajo (integración)", () => 
     await expect(nueva("MECANICA", abast)).rejects.toThrow(ErrorDeNegocio);
   });
 
+  it("una máquina desinstalada no admite solicitudes ni OT; fuera de servicio sí", async () => {
+    const base = { activoId: maquina, tipo: "PROGRAMADA" as const, descripcion: "Revisión", especialidadId: espMec, prioridad: "MEDIA" as const };
+    await db.update(schema.activos).set({ estadoOperativo: "FUERA_DE_SERVICIO" }).where(eq(schema.activos.id, maquina));
+    await expect(nueva("MECANICA")).resolves.toBeDefined();
+    await expect(crearOt(db, jefe, base)).resolves.toBeDefined();
+    await db.update(schema.activos).set({ estadoOperativo: "DESINSTALADO" }).where(eq(schema.activos.id, maquina));
+    await expect(nueva("ELECTRICA")).rejects.toThrow("desinstalada");
+    await expect(crearOt(db, jefe, base)).rejects.toThrow("desinstalada");
+  });
+
   it("solo un técnico gana cuando dos toman la misma solicitud a la vez", async () => {
     const { id } = await nueva("MECANICA");
     const r = await Promise.allSettled([tomarSolicitud(db, mec1, id), tomarSolicitud(db, mec2, id)]);
@@ -321,7 +331,7 @@ describe.skipIf(!url)("solicitudes y órdenes de trabajo (integración)", () => 
     expect(await avisosDe(bodeguero)).toContain("Solicitud de repuesto: 2 × Rodamiento");
     await expect(solicitarRepuesto(db, mec1, { solicitudId: id, cantidad: 0, descripcion: "x" })).rejects.toThrow("cantidad");
     await expect(solicitarRepuesto(db, mec1, { solicitudId: id, cantidad: 1.5, descripcion: "x" })).rejects.toThrow("cantidad");
-    await expect(solicitarRepuesto(db, mec1, { cantidad: 1, descripcion: "x" })).rejects.toThrow("solicitud o una orden");
+    await expect(solicitarRepuesto(db, mec1, { cantidad: 1, descripcion: "x" })).rejects.toThrow("solicitud, una orden");
     await expect(solicitarRepuesto(db, operador, { solicitudId: id, cantidad: 1, descripcion: "x" })).rejects.toThrow(ErrorDeNegocio);
   });
 

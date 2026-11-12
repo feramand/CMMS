@@ -69,15 +69,36 @@ export async function crearSolicitud(
   if (datos.categoria === "SERVICIOS_GENERALES" && !esAdministrativo(actor)) {
     throw new ErrorDeNegocio("Elige el tipo de falla.");
   }
+  const origen = actor.perfil === "OPERADOR" ? "OPERADOR" : actor.perfil === "TECNICO" ? "TECNICO" : "JEFE";
+  return registrarSolicitud(db, { ...datos, origen, creadaPor: actor.id });
+}
+
+/**
+ * Crea la solicitud sin revisar permisos: la usan el reporte de una persona y la detención
+ * que llega de Metrics (sin usuario del CMMS, con el id y la hora de la detención).
+ */
+export async function registrarSolicitud(
+  db: DB,
+  datos: DatosSolicitud & {
+    origen: "METRICS" | "OPERADOR" | "TECNICO" | "JEFE";
+    creadaPor: number | null;
+    idDetencionMetrics?: string;
+    detenidaEn?: Date;
+  },
+): Promise<{ id: number; duplicada: boolean }> {
+  const actor = { id: datos.creadaPor };
   const comentario = datos.comentario?.trim() || null;
   return db.transaction(async (tx) => {
     const [activo] = await tx
-      .select({ id: activos.id, nombre: activos.nombre, activo: activos.activo })
+      .select({ id: activos.id, nombre: activos.nombre, activo: activos.activo, estado: activos.estadoOperativo })
       .from(activos)
       .where(eq(activos.id, datos.activoId))
       // Bloquea la fila de la máquina: dos reportes simultáneos no crean dos solicitudes.
       .for("update");
     if (!activo || !activo.activo) throw new ErrorDeNegocio("Elige una máquina.");
+    if (activo.estado === "DESINSTALADO") {
+      throw new ErrorDeNegocio("Esta máquina está desinstalada: no admite solicitudes nuevas.");
+    }
 
     const [abierta] = await tx
       .select({ id: solicitudes.id })
@@ -93,20 +114,25 @@ export async function crearSolicitud(
     if (abierta) {
       await tx
         .insert(avisosSolicitud)
-        .values({ solicitudId: abierta.id, usuarioId: actor.id, comentario });
+        .values({
+          solicitudId: abierta.id,
+          usuarioId: actor.id,
+          comentario,
+          idDetencionMetrics: datos.idDetencionMetrics ?? null,
+        });
       return { id: abierta.id, duplicada: true };
     }
 
-    const origen =
-      actor.perfil === "OPERADOR" ? "OPERADOR" : actor.perfil === "TECNICO" ? "TECNICO" : "JEFE";
     const [nueva] = await tx
       .insert(solicitudes)
       .values({
         activoId: datos.activoId,
         categoria: datos.categoria,
-        origen,
+        origen: datos.origen,
         creadaPor: actor.id,
         comentario,
+        idDetencionMetrics: datos.idDetencionMetrics ?? null,
+        detenidaEn: datos.detenidaEn ?? null,
       })
       .returning({ id: solicitudes.id });
 
@@ -252,7 +278,7 @@ export async function cerrarSolicitud(
     const [sector] = await tx
       .select({ id: sectores.id })
       .from(sectores)
-      .where(and(eq(sectores.id, datos.sectorId), eq(sectores.activoId, s.activoId)));
+      .where(and(eq(sectores.id, datos.sectorId), eq(sectores.activoId, s.activoId), eq(sectores.activo, true)));
     if (!sector) throw new ErrorDeNegocio("Elige el sector de la máquina.");
     let origenReal: Categoria | null = null;
     if (s.categoria === "INDETERMINADA") {

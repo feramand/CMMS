@@ -1,16 +1,23 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Encabezado } from "@/componentes/encabezado";
-import { AvisoError, botonPrimario, campo, ChipOt, ChipSat, Dato, tarjeta } from "@/componentes/ui";
+import { ArbolEditable } from "@/componentes/arbol-sistemas";
+import { FichaTecnica } from "@/componentes/ficha-tecnica";
+import { AvisoError, botonPrimario, botonSecundario, campo, ChipOt, ChipSat, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { activos, ordenesTrabajo, plantas, sectores, solicitudes, solicitudesRepuesto } from "@/db/schema";
+import { activos, lecturasContador, ordenesTrabajo, pautas, plantas, sectores, solicitudes, solicitudesRepuesto, tiposMaquina } from "@/db/schema";
+import { aplanar } from "@/lib/arbol";
 import { nombreCategoria } from "@/lib/categorias";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
 import { exigirPerfil } from "@/lib/dal";
 import { fallasRecurrentes } from "@/lib/indicadores";
 import { duracion, fechaHora, minutosEntre } from "@/lib/tiempo";
-import { accionActualizarActivo, accionAgregarSector } from "../actions";
+import { accionRegistrarLectura } from "@/app/preventivo/actions";
+import { BarraAvance, ChipPauta } from "@/componentes/pautas";
+import { intervaloTexto, listarPautas } from "@/lib/consultas-pautas";
+import { accionAplicarPlantilla } from "../../tipos/actions";
+import { accionActualizarActivo } from "../actions";
 
 type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string }> };
 
@@ -20,21 +27,25 @@ export default async function FichaActivo({ params, searchParams }: Props) {
   const { error } = await searchParams;
   if (!Number.isInteger(id)) notFound();
   const [a] = await db
-    .select({ activo: activos, planta: plantas.nombre })
+    .select({ activo: activos, planta: plantas.nombre, tipo: tiposMaquina.nombre })
     .from(activos)
     .innerJoin(plantas, eq(plantas.id, activos.plantaId))
+    .leftJoin(tiposMaquina, eq(tiposMaquina.id, activos.tipoMaquinaId))
     .where(eq(activos.id, id));
   if (!a) notFound();
   const m = a.activo;
-  const [listaPlantas, listaSectores, sats, ots, repuestos] = await Promise.all([
+  const [listaPautas, lecturas, listaPlantas, listaTipos, todosLosSistemas, sats, ots, repuestos] = await Promise.all([
+    listarPautas(eq(pautas.activoId, id)),
+    db.select().from(lecturasContador).where(eq(lecturasContador.activoId, id)).orderBy(desc(lecturasContador.leidaEn), desc(lecturasContador.id)).limit(5),
     db.select().from(plantas).orderBy(asc(plantas.nombre)),
-    db.select().from(sectores).where(eq(sectores.activoId, id)).orderBy(asc(sectores.nombre)),
+    db.select().from(tiposMaquina).orderBy(asc(tiposMaquina.nombre)),
+    db.select().from(sectores).where(eq(sectores.activoId, id)),
     listarSolicitudes(eq(solicitudes.activoId, id), 50),
     listarOts(eq(ordenesTrabajo.activoId, id), 50),
     db.select().from(solicitudesRepuesto).where(eq(solicitudesRepuesto.activoId, id)),
   ]);
   const recurrentes = fallasRecurrentes(sats);
-  const v = (x: string | number | null) => x ?? "—";
+  const sistemas = aplanar(todosLosSistemas.filter((n) => n.activo));
 
   return (
     <>
@@ -46,52 +57,38 @@ export default async function FichaActivo({ params, searchParams }: Props) {
             <p className="text-slate-600">
               {a.planta}
               {m.seccion ? ` · ${m.seccion}` : ""}
-              {m.tipo ? ` · ${m.tipo}` : ""}
+              {a.tipo ? ` · ${a.tipo}` : ""}
             </p>
           </div>
-          <Link href="/admin/activos" className="text-marca underline">
-            Volver a activos
-          </Link>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link href={`/admin/activos/${id}/qr`} className={botonSecundario}>
+              Código QR
+            </Link>
+            <Link href="/admin/activos" className="text-marca underline">
+              Volver a activos
+            </Link>
+          </div>
         </div>
         <AvisoError mensaje={error} />
 
         <section className={`${tarjeta} flex flex-col gap-3`}>
           <h2 className="text-lg font-bold">Ficha técnica</h2>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            <Dato etiqueta="ID del activo">{m.codigo}</Dato>
-            <Dato etiqueta="Estado operativo">
-              {m.estadoOperativo === "OPERATIVA" ? "Operativa" : m.estadoOperativo === "DETENIDA" ? "Detenida" : "Fuera de servicio"}
-            </Dato>
-            <Dato etiqueta="Fabricante">{v(m.fabricante)}</Dato>
-            <Dato etiqueta="Modelo">{v(m.modelo)}</Dato>
-            <Dato etiqueta="Número de serie">{v(m.numeroSerie)}</Dato>
-            <Dato etiqueta="Formato de trabajo">{v(m.formato)}</Dato>
-            <Dato etiqueta="País de origen">{v(m.paisOrigen)}</Dato>
-            <Dato etiqueta="Año de fabricación">{v(m.anioFabricacion)}</Dato>
-            <Dato etiqueta="Año de llegada">{v(m.anioLlegada)}</Dato>
-            <Dato etiqueta="Año de instalación">{v(m.anioInstalacion)}</Dato>
-            <Dato etiqueta="Condición de llegada">
-              {m.condicionLlegada === "NUEVA" ? "Nueva" : m.condicionLlegada === "USADA" ? "Usada" : "—"}
-            </Dato>
-            <Dato etiqueta="Garantía">{v(m.garantia)}</Dato>
-            <Dato etiqueta="Código en Metrics">{v(m.codigoMetrics)}</Dato>
-            <Dato etiqueta="Giros acumulados">
-              {m.girosAcumulados === null ? "—" : m.girosAcumulados.toLocaleString("es-CL")}
-            </Dato>
-            <Dato etiqueta="Última preventiva">{v(m.ultimaPreventiva)}</Dato>
-          </div>
+          <FichaTecnica m={m} tipo={a.tipo} />
+          <p className="text-sm text-slate-600">
+            «Última preventiva» y «Último MP» se llenan solos al finalizar una pauta preventiva.
+          </p>
         </section>
 
         <details className={tarjeta} open={Boolean(error)}>
-          <summary className="cursor-pointer text-lg font-semibold text-marca">Editar ficha y estado operativo</summary>
+          <summary className="cursor-pointer text-lg font-semibold text-marca">Editar ficha y estado del equipo</summary>
           <form action={accionActualizarActivo} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <input type="hidden" name="id" value={id} />
             <label className="flex flex-col gap-1 text-sm font-semibold">
-              Estado operativo
+              Estado del equipo
               <select name="estadoOperativo" defaultValue={m.estadoOperativo} className={campo}>
-                <option value="OPERATIVA">Operativa</option>
-                <option value="DETENIDA">Detenida</option>
+                <option value="ACTIVO">Activo</option>
                 <option value="FUERA_DE_SERVICIO">Fuera de servicio</option>
+                <option value="DESINSTALADO">Desinstalado</option>
               </select>
             </label>
             <label className="flex flex-col gap-1 text-sm font-semibold">
@@ -100,6 +97,17 @@ export default async function FichaActivo({ params, searchParams }: Props) {
                 {listaPlantas.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.nombre}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-semibold">
+              Tipo de máquina
+              <select name="tipoMaquinaId" defaultValue={m.tipoMaquinaId ?? ""} className={campo}>
+                <option value="">Sin indicar</option>
+                {listaTipos.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.nombre}
                   </option>
                 ))}
               </select>
@@ -115,7 +123,6 @@ export default async function FichaActivo({ params, searchParams }: Props) {
             {(
               [
                 ["nombre", "Nombre de la máquina", m.nombre],
-                ["tipo", "Tipo de máquina", m.tipo],
                 ["fabricante", "Fabricante", m.fabricante],
                 ["modelo", "Modelo", m.modelo],
                 ["numeroSerie", "Número de serie", m.numeroSerie],
@@ -141,15 +148,80 @@ export default async function FichaActivo({ params, searchParams }: Props) {
         </details>
 
         <section className={`${tarjeta} flex flex-col gap-3`}>
-          <h2 className="text-lg font-bold">Sectores o componentes · {listaSectores.length}</h2>
-          <p className="text-slate-700">{listaSectores.map((s) => s.nombre).join(" · ") || "Sin sectores cargados."}</p>
-          <form action={accionAgregarSector} className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-bold">Árbol de sistemas · {sistemas.length}</h2>
+            {m.tipoMaquinaId !== null && (
+              <form action={accionAplicarPlantilla}>
+                <input type="hidden" name="activoId" value={id} />
+                <button type="submit" className={botonSecundario}>
+                  Aplicar plantilla del tipo
+                </button>
+              </form>
+            )}
+          </div>
+          <p className="text-slate-700">
+            {m.tipoMaquinaId !== null ? (
+              <>
+                Parte de la plantilla de{" "}
+                <Link href={`/admin/tipos/${m.tipoMaquinaId}`} className="text-marca underline">
+                  {a.tipo}
+                </Link>{" "}
+                y se ajusta aquí solo para esta máquina. «Aplicar plantilla» agrega lo que falte, sin borrar nada.
+              </>
+            ) : (
+              "Esta máquina no tiene tipo: elígelo en «Editar ficha» para traer su plantilla, o arma el árbol aquí."
+            )}{" "}
+            Toca un sistema para agregarle subsistemas, cambiarle el nombre o quitarlo. Los que tienen historial
+            no se borran: dejan de aparecer en las listas.
+          </p>
+          <ArbolEditable nodos={sistemas} ambito="activo" duenoId={id} />
+        </section>
+
+        <section className={`${tarjeta} flex flex-col gap-3`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-bold">Pautas preventivas · {listaPautas.length}</h2>
+            <Link href="/admin/preventivo" className="text-marca underline">
+              Crear o planificar pautas
+            </Link>
+          </div>
+          {listaPautas.length === 0 && <p className="text-slate-600">Esta máquina no tiene pautas.</p>}
+          {listaPautas.map((p) => (
+            <div key={p.id} className="flex flex-col gap-1 border-t border-slate-200 pt-2">
+              <div className="flex items-center justify-between gap-2">
+                <Link href={`/admin/preventivo/${p.id}`} className="text-marca underline">
+                  {p.nombre} · {intervaloTexto(p.tipo, p.intervalo)}
+                </Link>
+                <ChipPauta p={p} />
+              </div>
+              {p.ciclo && p.resumen && p.activa && <BarraAvance avance={p.resumen.avance} liberada={p.ciclo.estado === "LIBERADA"} />}
+            </div>
+          ))}
+        </section>
+
+        <section className={`${tarjeta} flex flex-col gap-3`}>
+          <h2 className="text-lg font-bold">Contador de giros</h2>
+          <form action={accionRegistrarLectura} className="flex flex-wrap items-end gap-2">
             <input type="hidden" name="activoId" value={id} />
-            <input name="nombre" required aria-label="Nuevo sector" placeholder="Nuevo sector" className={`${campo} max-w-xs`} />
+            <label className="flex flex-col gap-1 text-sm font-semibold">
+              Giros acumulados (lectura manual)
+              <input name="giros" inputMode="numeric" required placeholder={m.girosAcumulados?.toLocaleString("es-CL") ?? "0"} className={`${campo} max-w-xs`} />
+            </label>
             <button type="submit" className={botonPrimario}>
-              Agregar sector
+              Registrar lectura
             </button>
           </form>
+          <p className="text-sm text-slate-600">
+            Con Metrics conectado las lecturas llegan solas. El contador solo avanza: no se acepta una lectura menor que la última.
+          </p>
+          {lecturas.length > 0 && (
+            <ul className="flex flex-col gap-1 text-slate-700">
+              {lecturas.map((l) => (
+                <li key={l.id}>
+                  {fechaHora(l.leidaEn)} · {l.giros.toLocaleString("es-CL")} giros · {l.origen === "METRICS" ? "Metrics" : "manual"}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         {recurrentes.length > 0 && (
@@ -170,7 +242,7 @@ export default async function FichaActivo({ params, searchParams }: Props) {
                   <tr>
                     <th className="p-2 font-semibold">Fecha</th>
                     <th className="p-2 font-semibold">Tipo de falla</th>
-                    <th className="p-2 font-semibold">Sector</th>
+                    <th className="p-2 font-semibold">Sistema</th>
                     <th className="p-2 font-semibold">Solución</th>
                     <th className="p-2 font-semibold">Técnico</th>
                     <th className="p-2 font-semibold">Reparación</th>

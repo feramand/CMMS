@@ -22,6 +22,34 @@
       "when": 1794455352554,
       "tag": "0002_push_fotos_horarios",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794499035050,
+      "tag": "0003_sistemas_y_tipos",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794499035931,
+      "tag": "0004_quita_tipo_texto",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794500590982,
+      "tag": "0005_estado_del_equipo",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794501246431,
+      "tag": "0006_etapa2_preventivo_metrics",
+      "breakpoints": true
     }
   ]
 }

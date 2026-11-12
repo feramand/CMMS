@@ -10,6 +10,7 @@ import {
   ordenesTrabajo,
   plantas,
   sectores,
+  tiposMaquina,
   solicitudes,
   usuarios,
 } from "@/db/schema";
@@ -144,19 +145,25 @@ export async function listarTecnicos() {
 
 export type Tecnico = Awaited<ReturnType<typeof listarTecnicos>>[number];
 
+/** Máquinas para elegir al reportar una falla o crear una OT: sin las desinstaladas. */
+export async function listarActivosVigentes() {
+  return (await listarActivos()).filter((a) => a.estadoOperativo !== "DESINSTALADO");
+}
+
 export function listarActivos() {
   return db
     .select({
       id: activos.id,
       codigo: activos.codigo,
       nombre: activos.nombre,
-      tipo: activos.tipo,
+      tipo: tiposMaquina.nombre,
       seccion: activos.seccion,
       estadoOperativo: activos.estadoOperativo,
       planta: plantas.nombre,
     })
     .from(activos)
     .innerJoin(plantas, eq(plantas.id, activos.plantaId))
+    .leftJoin(tiposMaquina, eq(tiposMaquina.id, activos.tipoMaquinaId))
     .where(eq(activos.activo, true))
     .orderBy(asc(plantas.nombre), asc(activos.nombre));
 }

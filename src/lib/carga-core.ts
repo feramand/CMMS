@@ -12,7 +12,7 @@ export const COLUMNAS_ACTIVOS: Columna[] = [
   { clave: "codigo", titulo: "ID del activo", obligatoria: true, ejemplo: "IMP-001" },
   { clave: "nombre", titulo: "Nombre de la máquina", obligatoria: true, ejemplo: "Heidelberg XL106" },
   { clave: "planta", titulo: "Planta", obligatoria: true, ejemplo: "Planta 1" },
-  { clave: "tipo", titulo: "Tipo de máquina", ejemplo: "Prensa offset de pliegos" },
+  { clave: "tipo", titulo: "Tipo de máquina", ejemplo: "Prensa Offset Plana" },
   { clave: "fabricante", titulo: "Fabricante", ejemplo: "Heidelberg" },
   { clave: "modelo", titulo: "Modelo", ejemplo: "Speedmaster XL 106" },
   { clave: "numeroSerie", titulo: "Número de serie", ejemplo: "" },
@@ -25,7 +25,7 @@ export const COLUMNAS_ACTIVOS: Columna[] = [
   { clave: "seccion", titulo: "Ubicación o sección", ejemplo: "Offset" },
   { clave: "garantia", titulo: "Garantía", ejemplo: "" },
   { clave: "codigoMetrics", titulo: "Código en Metrics", ejemplo: "" },
-  { clave: "sectores", titulo: "Sectores (separados por coma)", ejemplo: "Marcador, Cuerpo impresor 1, Salida" },
+  { clave: "sectores", titulo: "Sistemas propios (separados por coma)", ejemplo: "Marcador, Cuerpo impresor 1, Salida" },
 ];
 
 export const COLUMNAS_USUARIOS: Columna[] = [
