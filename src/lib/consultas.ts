@@ -13,6 +13,8 @@ import {
   solicitudes,
   usuarios,
 } from "@/db/schema";
+import { estaDisponible } from "./disponibilidad";
+import { contextoDisponibilidad } from "./horarios-core";
 
 const responsable = alias(usuarios, "responsable");
 const creador = alias(usuarios, "creador");
@@ -97,7 +99,7 @@ export type FilaOt = Awaited<ReturnType<typeof listarOts>>[number];
 
 /** Técnicos activos con su especialidad, disponibilidad y cantidad de trabajos abiertos. */
 export async function listarTecnicos() {
-  const [tecnicos, satAbiertas, otAbiertas] = await Promise.all([
+  const [tecnicos, satAbiertas, otAbiertas, contexto] = await Promise.all([
     db
       .select({
         id: usuarios.id,
@@ -106,6 +108,10 @@ export async function listarTecnicos() {
         codigo: especialidades.codigo,
         modalidad: fichasTecnico.modalidad,
         enTurno: fichasTecnico.enTurno,
+        turnoDesde: fichasTecnico.turnoDesde,
+        diasLaborales: fichasTecnico.diasLaborales,
+        horaEntrada: fichasTecnico.horaEntrada,
+        horaSalida: fichasTecnico.horaSalida,
       })
       .from(usuarios)
       .innerJoin(fichasTecnico, eq(fichasTecnico.usuarioId, usuarios.id))
@@ -122,14 +128,16 @@ export async function listarTecnicos() {
       .from(ordenesTrabajo)
       .where(inArray(ordenesTrabajo.estado, ["ASIGNADA", "EN_CURSO", "ESPERA_REPUESTOS"]))
       .groupBy(ordenesTrabajo.responsableId),
+    contextoDisponibilidad(db),
   ]);
+  const ahora = new Date();
   const abiertos = new Map<number, number>();
   for (const f of [...satAbiertas, ...otAbiertas]) {
     if (f.id) abiertos.set(f.id, (abiertos.get(f.id) ?? 0) + f.n);
   }
   return tecnicos.map((t) => ({
     ...t,
-    disponible: t.modalidad === "HORARIO_FIJO" || t.enTurno,
+    disponible: estaDisponible(t, ahora, contexto.feriados, contexto.horasApagado),
     trabajosAbiertos: abiertos.get(t.id) ?? 0,
   }));
 }

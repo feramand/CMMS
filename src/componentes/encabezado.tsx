@@ -11,6 +11,8 @@ const MENU_ADMIN = [
   { href: "/admin/ot", nombre: "Órdenes de trabajo" },
   { href: "/admin/activos", nombre: "Activos" },
   { href: "/admin/usuarios", nombre: "Usuarios" },
+  { href: "/admin/carga", nombre: "Carga inicial" },
+  { href: "/admin/configuracion", nombre: "Configuración" },
 ];
 
 export async function Encabezado({ usuario }: { usuario: UsuarioSesion }) {

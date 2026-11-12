@@ -8,18 +8,20 @@ Aplicación web adaptable (computador y celular) que se instala en un servidor d
 **Etapa 0 (base): terminada.** Ingreso con PIN o contraseña, seis perfiles con permisos,
 gestión de usuarios, turnos y datos base.
 
-**Etapa 1 (activos, solicitudes y órdenes de trabajo): en curso.** Ya funciona:
+**Etapa 1 (activos, solicitudes y órdenes de trabajo): terminada.**
 
-- Activos con ficha técnica, sectores, historial y aviso de fallas recurrentes.
+- Activos con ficha técnica editable, sectores, historial y aviso de fallas recurrentes.
 - Solicitudes de atención (SAT): reporte manual sin duplicados, toma por un solo técnico,
   asignación por jefatura, cierre simple (sector + solución) y escalamiento a orden de trabajo.
 - Órdenes de trabajo con folio AANNNN, estados, asignación, repuestos y causa raíz opcional.
 - Trabajo con apoyo, solicitud de repuesto con máquina heredada y entrega por bodega.
+- Fotos adjuntas al reportar, al cerrar y al pedir repuestos.
 - Tablero Kanban de solicitudes y órdenes de trabajo.
-- Avisos dentro de la aplicación.
+- Avisos dentro de la aplicación y notificaciones push al celular.
+- Carga inicial de activos y usuarios desde Excel, con plantillas descargables.
+- Horario semanal de técnicos de horario fijo, feriados y apagado automático del turno.
 
-Pendiente de la etapa 1: notificaciones push al celular, fotos adjuntas, carga inicial desde Excel,
-edición de activos y horario semanal de los técnicos de horario fijo.
+Próxima etapa: mantenimiento preventivo (pautas por tiempo y por giros) e integración con Metrics.
 
 ## Tecnología
 
@@ -58,6 +60,14 @@ docker compose up -d --build
 La aplicación queda en el puerto 3000 del servidor, solo accesible localmente.
 TI debe poner delante un proxy inverso con **HTTPS y certificado válido**: sin HTTPS no funciona
 el ingreso ni la instalación en Android.
+
+Notificaciones push (opcional): generar un par de claves y copiarlas en `.env`.
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Las fotos adjuntas se guardan en el volumen `cmms_adjuntos`. **Hay que respaldarlo junto con la base de datos.**
 
 Respaldo de la base de datos:
 

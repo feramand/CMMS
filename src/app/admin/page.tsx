@@ -8,6 +8,8 @@ const DISPONIBLES = [
   { href: "/admin/ot", nombre: "Órdenes de trabajo" },
   { href: "/admin/activos", nombre: "Activos" },
   { href: "/admin/usuarios", nombre: "Usuarios" },
+  { href: "/admin/carga", nombre: "Carga inicial" },
+  { href: "/admin/configuracion", nombre: "Configuración" },
 ];
 
 const MODULOS = ["Planificación preventiva", "Bodega", "Compras", "KPI y reportes"];

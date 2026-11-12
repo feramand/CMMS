@@ -10,7 +10,7 @@ import { listarOts, listarSolicitudes } from "@/lib/consultas";
 import { exigirPerfil } from "@/lib/dal";
 import { fallasRecurrentes } from "@/lib/indicadores";
 import { duracion, fechaHora, minutosEntre } from "@/lib/tiempo";
-import { accionAgregarSector } from "../actions";
+import { accionActualizarActivo, accionAgregarSector } from "../actions";
 
 type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string }> };
 
@@ -26,7 +26,8 @@ export default async function FichaActivo({ params, searchParams }: Props) {
     .where(eq(activos.id, id));
   if (!a) notFound();
   const m = a.activo;
-  const [listaSectores, sats, ots, repuestos] = await Promise.all([
+  const [listaPlantas, listaSectores, sats, ots, repuestos] = await Promise.all([
+    db.select().from(plantas).orderBy(asc(plantas.nombre)),
     db.select().from(sectores).where(eq(sectores.activoId, id)).orderBy(asc(sectores.nombre)),
     listarSolicitudes(eq(solicitudes.activoId, id), 50),
     listarOts(eq(ordenesTrabajo.activoId, id), 50),
@@ -58,6 +59,9 @@ export default async function FichaActivo({ params, searchParams }: Props) {
           <h2 className="text-lg font-bold">Ficha técnica</h2>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             <Dato etiqueta="ID del activo">{m.codigo}</Dato>
+            <Dato etiqueta="Estado operativo">
+              {m.estadoOperativo === "OPERATIVA" ? "Operativa" : m.estadoOperativo === "DETENIDA" ? "Detenida" : "Fuera de servicio"}
+            </Dato>
             <Dato etiqueta="Fabricante">{v(m.fabricante)}</Dato>
             <Dato etiqueta="Modelo">{v(m.modelo)}</Dato>
             <Dato etiqueta="Número de serie">{v(m.numeroSerie)}</Dato>
@@ -77,6 +81,64 @@ export default async function FichaActivo({ params, searchParams }: Props) {
             <Dato etiqueta="Última preventiva">{v(m.ultimaPreventiva)}</Dato>
           </div>
         </section>
+
+        <details className={tarjeta} open={Boolean(error)}>
+          <summary className="cursor-pointer text-lg font-semibold text-marca">Editar ficha y estado operativo</summary>
+          <form action={accionActualizarActivo} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <input type="hidden" name="id" value={id} />
+            <label className="flex flex-col gap-1 text-sm font-semibold">
+              Estado operativo
+              <select name="estadoOperativo" defaultValue={m.estadoOperativo} className={campo}>
+                <option value="OPERATIVA">Operativa</option>
+                <option value="DETENIDA">Detenida</option>
+                <option value="FUERA_DE_SERVICIO">Fuera de servicio</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-semibold">
+              Planta
+              <select name="plantaId" defaultValue={m.plantaId} className={campo}>
+                {listaPlantas.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.nombre}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-semibold">
+              Condición de llegada
+              <select name="condicionLlegada" defaultValue={m.condicionLlegada ?? ""} className={campo}>
+                <option value="">Sin indicar</option>
+                <option value="NUEVA">Nueva</option>
+                <option value="USADA">Usada</option>
+              </select>
+            </label>
+            {(
+              [
+                ["nombre", "Nombre de la máquina", m.nombre],
+                ["tipo", "Tipo de máquina", m.tipo],
+                ["fabricante", "Fabricante", m.fabricante],
+                ["modelo", "Modelo", m.modelo],
+                ["numeroSerie", "Número de serie", m.numeroSerie],
+                ["formato", "Formato de trabajo", m.formato],
+                ["paisOrigen", "País de origen", m.paisOrigen],
+                ["anioFabricacion", "Año de fabricación", m.anioFabricacion],
+                ["anioLlegada", "Año de llegada", m.anioLlegada],
+                ["anioInstalacion", "Año de instalación", m.anioInstalacion],
+                ["seccion", "Ubicación o sección", m.seccion],
+                ["garantia", "Garantía", m.garantia],
+                ["codigoMetrics", "Código en Metrics", m.codigoMetrics],
+              ] as const
+            ).map(([nombre, etiqueta, valor]) => (
+              <label key={nombre} className="flex flex-col gap-1 text-sm font-semibold">
+                {etiqueta}
+                <input name={nombre} defaultValue={valor ?? ""} required={nombre === "nombre"} className={campo} />
+              </label>
+            ))}
+            <button type="submit" className={`${botonPrimario} sm:col-span-2 lg:col-span-3`}>
+              Guardar cambios
+            </button>
+          </form>
+        </details>
 
         <section className={`${tarjeta} flex flex-col gap-3`}>
           <h2 className="text-lg font-bold">Sectores o componentes · {listaSectores.length}</h2>

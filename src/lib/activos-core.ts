@@ -47,13 +47,73 @@ export type DatosActivo = {
 
 const limpio = (v?: string) => v?.trim() || null;
 
+const ESTADOS = ["OPERATIVA", "DETENIDA", "FUERA_DE_SERVICIO"] as const;
+export type EstadoOperativo = (typeof ESTADOS)[number];
+
+/** Campos comunes a la creación y a la edición, ya validados. */
+function camposDeFicha(datos: DatosActivo) {
+  const nombre = datos.nombre.trim();
+  if (!nombre) throw new ErrorDeNegocio("Falta el nombre de la máquina.");
+  return {
+    nombre,
+    tipo: limpio(datos.tipo),
+    fabricante: limpio(datos.fabricante),
+    modelo: limpio(datos.modelo),
+    numeroSerie: limpio(datos.numeroSerie),
+    formato: limpio(datos.formato),
+    paisOrigen: limpio(datos.paisOrigen),
+    anioFabricacion: anio(datos.anioFabricacion, "Año de fabricación"),
+    anioLlegada: anio(datos.anioLlegada, "Año de llegada"),
+    anioInstalacion: anio(datos.anioInstalacion, "Año de instalación"),
+    condicionLlegada:
+      datos.condicionLlegada === "NUEVA" ? ("NUEVA" as const) : datos.condicionLlegada === "USADA" ? ("USADA" as const) : null,
+    seccion: limpio(datos.seccion),
+    garantia: limpio(datos.garantia),
+    codigoMetrics: limpio(datos.codigoMetrics),
+  };
+}
+
+/** Edita la ficha técnica y el estado operativo. El ID del activo no cambia. */
+export async function actualizarActivo(
+  db: DB,
+  actor: UsuarioSesion,
+  id: number,
+  datos: Omit<DatosActivo, "codigo" | "sectores"> & { estadoOperativo: string },
+): Promise<void> {
+  exigirGestion(actor);
+  if (!ESTADOS.includes(datos.estadoOperativo as EstadoOperativo)) {
+    throw new ErrorDeNegocio("Elige el estado operativo.");
+  }
+  const campos = camposDeFicha({ ...datos, codigo: "" });
+  try {
+    await db.transaction(async (tx) => {
+      const [planta] = await tx.select({ id: plantas.id }).from(plantas).where(eq(plantas.id, datos.plantaId));
+      if (!planta) throw new ErrorDeNegocio("Elige la planta.");
+      const cambiados = await tx
+        .update(activos)
+        .set({ ...campos, plantaId: planta.id, estadoOperativo: datos.estadoOperativo as EstadoOperativo })
+        .where(eq(activos.id, id))
+        .returning({ id: activos.id });
+      if (cambiados.length === 0) throw new ErrorDeNegocio("El activo no existe.");
+      await tx.insert(bitacora).values({
+        usuarioId: actor.id,
+        accion: "EDITAR_ACTIVO",
+        entidad: "activo",
+        entidadId: String(id),
+        detalle: { ...campos, estadoOperativo: datos.estadoOperativo },
+      });
+    });
+  } catch (e) {
+    if (esDuplicado(e)) throw new ErrorDeNegocio("Ya existe otro activo con ese código de Metrics.");
+    throw e;
+  }
+}
+
 export async function crearActivo(db: DB, actor: UsuarioSesion, datos: DatosActivo): Promise<number> {
   exigirGestion(actor);
   const codigo = datos.codigo.trim().toUpperCase();
-  const nombre = datos.nombre.trim();
   if (!codigo) throw new ErrorDeNegocio("Falta el ID del activo.");
-  if (!nombre) throw new ErrorDeNegocio("Falta el nombre de la máquina.");
-  const condicion = datos.condicionLlegada === "NUEVA" || datos.condicionLlegada === "USADA" ? datos.condicionLlegada : null;
+  const campos = camposDeFicha(datos);
   const nombresSector = [...new Set((datos.sectores ?? "").split(/[\n,]/).map((s) => s.trim()).filter(Boolean))];
   try {
     return await db.transaction(async (tx) => {
@@ -61,24 +121,7 @@ export async function crearActivo(db: DB, actor: UsuarioSesion, datos: DatosActi
       if (!planta) throw new ErrorDeNegocio("Elige la planta.");
       const [nuevo] = await tx
         .insert(activos)
-        .values({
-          codigo,
-          nombre,
-          plantaId: planta.id,
-          tipo: limpio(datos.tipo),
-          fabricante: limpio(datos.fabricante),
-          modelo: limpio(datos.modelo),
-          numeroSerie: limpio(datos.numeroSerie),
-          formato: limpio(datos.formato),
-          paisOrigen: limpio(datos.paisOrigen),
-          anioFabricacion: anio(datos.anioFabricacion, "Año de fabricación"),
-          anioLlegada: anio(datos.anioLlegada, "Año de llegada"),
-          anioInstalacion: anio(datos.anioInstalacion, "Año de instalación"),
-          condicionLlegada: condicion,
-          seccion: limpio(datos.seccion),
-          garantia: limpio(datos.garantia),
-          codigoMetrics: limpio(datos.codigoMetrics),
-        })
+        .values({ ...campos, codigo, plantaId: planta.id })
         .returning({ id: activos.id });
       if (nombresSector.length) {
         await tx.insert(sectores).values(nombresSector.map((n) => ({ activoId: nuevo.id, nombre: n })));

@@ -36,3 +36,24 @@ export function fechaHora(fecha: Date | null): string {
     hour12: false,
   }).format(fecha);
 }
+
+/** Fecha (AAAA-MM-DD), día de la semana (1 = lunes … 7 = domingo) y minutos desde medianoche, en hora de Chile. */
+export function partesEnChile(fecha: Date): { fecha: string; diaSemana: number; minutos: number } {
+  const partes = new Intl.DateTimeFormat("en-CA", {
+    timeZone: ZONA,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(fecha);
+  const v = (tipo: string) => partes.find((p) => p.type === tipo)!.value;
+  const dias = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  return {
+    fecha: `${v("year")}-${v("month")}-${v("day")}`,
+    diaSemana: dias.indexOf(v("weekday")) + 1,
+    minutos: Number(v("hour")) * 60 + Number(v("minute")),
+  };
+}

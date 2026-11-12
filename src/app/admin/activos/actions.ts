@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { ejecutar, entero, texto } from "@/lib/accion";
-import { agregarSector, crearActivo } from "@/lib/activos-core";
+import { actualizarActivo, agregarSector, crearActivo } from "@/lib/activos-core";
 import { exigirSesion } from "@/lib/dal";
 
 export async function accionCrearActivo(formData: FormData) {
@@ -37,5 +37,31 @@ export async function accionAgregarSector(formData: FormData) {
   const activoId = entero(formData.get("activoId"));
   await ejecutar(`/admin/activos/${activoId}`, async () => {
     await agregarSector(db, actor, activoId, texto(formData.get("nombre")));
+  });
+}
+
+export async function accionActualizarActivo(formData: FormData) {
+  const actor = await exigirSesion();
+  const id = entero(formData.get("id"));
+  await ejecutar(`/admin/activos/${id}`, async () => {
+    const t = (n: string) => texto(formData.get(n));
+    await actualizarActivo(db, actor, id, {
+      nombre: t("nombre"),
+      plantaId: entero(formData.get("plantaId")),
+      tipo: t("tipo"),
+      fabricante: t("fabricante"),
+      modelo: t("modelo"),
+      numeroSerie: t("numeroSerie"),
+      formato: t("formato"),
+      paisOrigen: t("paisOrigen"),
+      anioFabricacion: t("anioFabricacion"),
+      anioLlegada: t("anioLlegada"),
+      anioInstalacion: t("anioInstalacion"),
+      condicionLlegada: t("condicionLlegada"),
+      seccion: t("seccion"),
+      garantia: t("garantia"),
+      codigoMetrics: t("codigoMetrics"),
+      estadoOperativo: t("estadoOperativo"),
+    });
   });
 }
