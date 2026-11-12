@@ -5,18 +5,21 @@ Aplicación web adaptable (computador y celular) que se instala en un servidor d
 
 ## Estado
 
-**Etapa 0 (base) terminada.** Incluye:
+**Etapa 0 (base): terminada.** Ingreso con PIN o contraseña, seis perfiles con permisos,
+gestión de usuarios, turnos y datos base.
 
-- Ingreso: operadores con usuario de Metrics + PIN; técnicos y bodegueros con RUT + PIN;
-  perfiles administrativos con RUT o correo + contraseña.
-- Bloqueo tras 5 intentos fallidos. Lo restablece el administrador; a técnicos y operadores,
-  también el jefe o el planificador.
-- Seis perfiles con sus permisos, validados en el servidor.
-- Gestión de usuarios y ficha de técnico (especialidad, modalidad, control "Estoy de turno").
-- Datos base: 2 plantas, especialidades, 3 turnos, parámetros y bitácora de cambios.
-- Instalable en la pantalla de inicio de Android.
+**Etapa 1 (activos, solicitudes y órdenes de trabajo): en curso.** Ya funciona:
 
-Próxima etapa: activos, solicitudes de atención técnica (SAT) y órdenes de trabajo.
+- Activos con ficha técnica, sectores, historial y aviso de fallas recurrentes.
+- Solicitudes de atención (SAT): reporte manual sin duplicados, toma por un solo técnico,
+  asignación por jefatura, cierre simple (sector + solución) y escalamiento a orden de trabajo.
+- Órdenes de trabajo con folio AANNNN, estados, asignación, repuestos y causa raíz opcional.
+- Trabajo con apoyo, solicitud de repuesto con máquina heredada y entrega por bodega.
+- Tablero Kanban de solicitudes y órdenes de trabajo.
+- Avisos dentro de la aplicación.
+
+Pendiente de la etapa 1: notificaciones push al celular, fotos adjuntas, carga inicial desde Excel,
+edición de activos y horario semanal de los técnicos de horario fijo.
 
 ## Tecnología
 
