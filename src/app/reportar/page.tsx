@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { accionReportar } from "@/app/trabajos/actions";
 import { Encabezado } from "@/componentes/encabezado";
+import { CampoFotos } from "@/componentes/fotos";
 import { AvisoError, campo } from "@/componentes/ui";
 import { db } from "@/db";
 import { solicitudes, type Categoria } from "@/db/schema";
@@ -78,6 +79,7 @@ export default async function Reportar({ searchParams }: { searchParams: Promise
               Comentario (opcional)
               <textarea name="comentario" rows={2} className="rounded-lg border border-slate-400 bg-white p-3 text-lg" />
             </label>
+            <CampoFotos />
             <div className="flex-1" />
             <button type="submit" className="h-16 rounded-xl bg-amber-700 text-2xl font-bold text-white">
               Enviar

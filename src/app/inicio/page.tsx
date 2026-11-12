@@ -3,10 +3,12 @@ import Link from "next/link";
 import { accionResolverRepuesto, accionTomar } from "@/app/trabajos/actions";
 import { ActivarAvisos } from "@/componentes/activar-avisos";
 import { Encabezado } from "@/componentes/encabezado";
+import { Fotos } from "@/componentes/fotos";
 import { AvisoError, Chip, ChipOt, ChipSat, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
 import {
   activos,
+  adjuntos,
   apoyos,
   especialidades,
   fichasTecnico,
@@ -219,6 +221,12 @@ async function InicioBodeguero() {
     .leftJoin(ordenesTrabajo, eq(ordenesTrabajo.id, solicitudesRepuesto.otId))
     .where(or(eq(solicitudesRepuesto.estado, "PENDIENTE"), eq(solicitudesRepuesto.estado, "APROBADA")))
     .orderBy(solicitudesRepuesto.creadaEn);
+  const fotos = pendientes.length
+    ? await db
+        .select({ id: adjuntos.id, repuestoId: adjuntos.repuestoId })
+        .from(adjuntos)
+        .where(inArray(adjuntos.repuestoId, pendientes.map((r) => r.id)))
+    : [];
   return (
     <section className="flex flex-col gap-2">
       <h2 className={titulo}>Solicitudes de repuesto · {pendientes.length}</h2>
@@ -236,6 +244,7 @@ async function InicioBodeguero() {
           <span className="text-sm text-slate-600">
             Pidió {r.solicitante} · {fechaHora(r.creadaEn)}
           </span>
+          <Fotos ids={fotos.filter((f) => f.repuestoId === r.id).map((f) => f.id)} titulo="Fotos de referencia" />
           <form action={accionResolverRepuesto} className="grid grid-cols-2 gap-2">
             <input type="hidden" name="id" value={r.id} />
             <button name="estado" value="ENTREGADA" className="h-12 rounded-lg bg-green-700 text-base font-semibold text-white">

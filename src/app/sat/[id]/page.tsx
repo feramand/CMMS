@@ -1,12 +1,13 @@
-import { and, asc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, or } from "drizzle-orm";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { accionCerrar, accionEscalar, accionTomar } from "@/app/trabajos/actions";
 import { CamposApoyo } from "@/componentes/apoyo";
 import { Encabezado } from "@/componentes/encabezado";
+import { CampoFotos, Fotos } from "@/componentes/fotos";
 import { AvisoError, botonSecundario, campo, ChipSat, Dato, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { apoyos, sectores, solicitudes, solicitudesRepuesto, usuarios } from "@/db/schema";
+import { adjuntos, apoyos, sectores, solicitudes, solicitudesRepuesto, usuarios } from "@/db/schema";
 import { nombreCategoria, ORIGENES_REALES } from "@/lib/categorias";
 import { listarSolicitudes, listarTecnicos } from "@/lib/consultas";
 import { exigirSesion } from "@/lib/dal";
@@ -54,6 +55,16 @@ export default async function DetalleSolicitud({ params, searchParams }: Props) 
           5,
         ),
   ]);
+  const idsRepuestos = repuestos.map((r) => r.id);
+  const fotos = await db
+    .select({ id: adjuntos.id, repuestoId: adjuntos.repuestoId })
+    .from(adjuntos)
+    .where(
+      idsRepuestos.length
+        ? or(eq(adjuntos.solicitudId, id), inArray(adjuntos.repuestoId, idsRepuestos))
+        : eq(adjuntos.solicitudId, id),
+    )
+    .orderBy(asc(adjuntos.id));
   const respuesta = minutosEntre(s.creadaEn, s.tomadaEn);
   const reparacion = minutosEntre(s.tomadaEn, s.cerradaEn);
 
@@ -110,6 +121,7 @@ export default async function DetalleSolicitud({ params, searchParams }: Props) 
           {listaApoyos.length > 0 && (
             <p className="text-slate-600">Con apoyo de {listaApoyos.map((a) => a.nombre).join(", ")}</p>
           )}
+          <Fotos ids={fotos.filter((f) => f.repuestoId === null).map((f) => f.id)} />
           {s.otId && (
             <Link href={`/ot/${s.otId}`} className="font-semibold text-marca underline">
               Ver orden de trabajo {s.folioOt}
@@ -121,9 +133,12 @@ export default async function DetalleSolicitud({ params, searchParams }: Props) 
           <section className={`${tarjeta} flex flex-col gap-1`}>
             <h2 className="font-semibold">Repuestos solicitados</h2>
             {repuestos.map((r) => (
-              <span key={r.id} className="text-slate-700">
-                {r.cantidad} × {r.descripcion} · {r.estado.toLowerCase()}
-              </span>
+              <div key={r.id} className="flex flex-col gap-1 text-slate-700">
+                <span>
+                  {r.cantidad} × {r.descripcion} · {r.estado.toLowerCase()}
+                </span>
+                <Fotos ids={fotos.filter((f) => f.repuestoId === r.id).map((f) => f.id)} titulo="Fotos de referencia" />
+              </div>
             ))}
           </section>
         )}
@@ -199,6 +214,7 @@ export default async function DetalleSolicitud({ params, searchParams }: Props) 
                   </label>
                 )}
               </section>
+              <CampoFotos />
               <CamposApoyo tecnicos={tecnicos} propioId={usuario.id} />
               <button type="submit" className="h-16 rounded-xl bg-green-700 text-2xl font-bold text-white">
                 3. Solucionado

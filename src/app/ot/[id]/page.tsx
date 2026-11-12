@@ -1,12 +1,13 @@
-import { eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { accionAsignarOt, accionCausaRaiz, accionEstadoOt } from "@/app/trabajos/actions";
 import { CamposApoyo } from "@/componentes/apoyo";
 import { Encabezado } from "@/componentes/encabezado";
+import { Fotos } from "@/componentes/fotos";
 import { AvisoError, botonPrimario, botonSecundario, campo, ChipOt, Dato, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { apoyos, ordenesTrabajo, solicitudes, solicitudesRepuesto, usuarios } from "@/db/schema";
+import { adjuntos, apoyos, ordenesTrabajo, solicitudes, solicitudesRepuesto, usuarios } from "@/db/schema";
 import { listarOts, listarTecnicos } from "@/lib/consultas";
 import { exigirSesion } from "@/lib/dal";
 import { estadosSiguientes, nombreEstadoOt } from "@/lib/ot-core";
@@ -51,6 +52,13 @@ export default async function FichaOt({ params, searchParams }: Props) {
     db.select({ id: solicitudes.id }).from(solicitudes).where(eq(solicitudes.otId, id)).limit(1),
     abierta && puedeOperar ? listarTecnicos() : [],
   ]);
+  const fotos = repuestos.length
+    ? await db
+        .select({ id: adjuntos.id, repuestoId: adjuntos.repuestoId })
+        .from(adjuntos)
+        .where(inArray(adjuntos.repuestoId, repuestos.map((r) => r.id)))
+        .orderBy(asc(adjuntos.id))
+    : [];
   const siguientes = puedeOperar ? estadosSiguientes(ot.estado, admin) : [];
   const trabajo = minutosEntre(ot.inicioEn, ot.terminoEn);
 
@@ -206,7 +214,10 @@ export default async function FichaOt({ params, searchParams }: Props) {
                     <tr key={r.id} className="border-t border-slate-200">
                       <td className="p-2">{r.cantidad}</td>
                       <td className="p-2">{r.codigoFabricante ?? "—"}</td>
-                      <td className="p-2">{r.descripcion}</td>
+                      <td className="p-2">
+                        {r.descripcion}
+                        <Fotos ids={fotos.filter((f) => f.repuestoId === r.id).map((f) => f.id)} titulo="Fotos de referencia" />
+                      </td>
                       <td className="p-2">{REPUESTO[r.estado]}</td>
                     </tr>
                   ))}

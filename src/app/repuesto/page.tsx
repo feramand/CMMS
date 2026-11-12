@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { accionSolicitarRepuesto } from "@/app/trabajos/actions";
 import { Encabezado } from "@/componentes/encabezado";
+import { CampoFotos } from "@/componentes/fotos";
 import { AvisoError, campo, tarjeta } from "@/componentes/ui";
 import { ordenesTrabajo, solicitudes } from "@/db/schema";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
@@ -63,6 +64,7 @@ export default async function SolicitarRepuesto({ searchParams }: Props) {
               className={`${campo} h-14 text-lg`}
             />
           </label>
+          <CampoFotos etiqueta="Fotos de referencia (opcional)" />
           <p className="text-sm text-slate-600">La máquina se toma del trabajo que estás atendiendo.</p>
           <div className="flex-1" />
           <button type="submit" className="h-16 rounded-xl bg-marca text-xl font-bold text-white">

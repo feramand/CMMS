@@ -12,6 +12,7 @@ import {
   type TipoOt,
 } from "@/db/schema";
 import { ejecutar, entero, texto } from "@/lib/accion";
+import { fotosDeFormulario, guardarFotos } from "@/lib/adjuntos-core";
 import { exigirSesion } from "@/lib/dal";
 import {
   asignarOt,
@@ -43,11 +44,13 @@ export async function accionReportar(formData: FormData) {
   await ejecutar("/reportar", async () => {
     const categoria = texto(formData.get("categoria")) as Categoria;
     if (!categoriaEnum.enumValues.includes(categoria)) throw new ErrorDeNegocio("Elige el tipo de falla.");
+    const fotos = await fotosDeFormulario(formData);
     const r = await crearSolicitud(db, actor, {
       activoId: entero(formData.get("activoId")),
       categoria,
       comentario: texto(formData.get("comentario")),
     });
+    await guardarFotos(db, actor, { solicitudId: r.id }, fotos);
     return `/sat/${r.id}${r.duplicada ? "?aviso=duplicada" : ""}`;
   });
 }
@@ -75,12 +78,14 @@ export async function accionCerrar(formData: FormData) {
   const id = entero(formData.get("id"));
   await ejecutar(`/sat/${id}`, async () => {
     const origenReal = texto(formData.get("origenReal"));
+    const fotos = await fotosDeFormulario(formData);
     await cerrarSolicitud(db, actor, id, {
       sectorId: entero(formData.get("sectorId")),
       solucion: texto(formData.get("solucion")),
       origenReal: origenReal ? (origenReal as Categoria) : null,
       apoyoIds: apoyos(formData),
     });
+    await guardarFotos(db, actor, { solicitudId: id }, fotos);
   });
 }
 
@@ -162,13 +167,15 @@ export async function accionSolicitarRepuesto(formData: FormData) {
   const otId = entero(formData.get("otId")) || null;
   const vuelta = otId ? `/ot/${otId}` : `/sat/${solicitudId}`;
   await ejecutar(`/repuesto?${otId ? `ot=${otId}` : `sat=${solicitudId}`}`, async () => {
-    await solicitarRepuesto(db, actor, {
+    const fotos = await fotosDeFormulario(formData);
+    const repuestoId = await solicitarRepuesto(db, actor, {
       solicitudId,
       otId,
       cantidad: Number(formData.get("cantidad")),
       codigoFabricante: texto(formData.get("codigoFabricante")),
       descripcion: texto(formData.get("descripcion")),
     });
+    await guardarFotos(db, actor, { repuestoId }, fotos);
     return `${vuelta}?aviso=repuesto`;
   });
 }
