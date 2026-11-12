@@ -150,12 +150,12 @@ describe.skipIf(!url)("tipos de máquina y árbol de sistemas (integración)", (
     const vacia = await crearActivo(db, jefe, { codigo: "A", nombre: "A", plantaId: planta });
     const conArbol = await crearActivo(db, jefe, { codigo: "B", nombre: "B", plantaId: planta, sectores: "Motor" });
     for (const [id, nombre] of [[vacia, "A"], [conArbol, "B"]] as const) {
-      await actualizarActivo(db, jefe, id, { nombre, plantaId: planta, tipoMaquinaId: tipo, estadoOperativo: "OPERATIVA" });
+      await actualizarActivo(db, jefe, id, { nombre, plantaId: planta, tipoMaquinaId: tipo, estadoOperativo: "ACTIVO" });
     }
     expect(await rutas(vacia)).toEqual(RUTAS_PLANTILLA);
     expect(await rutas(conArbol)).toEqual(["Motor"]);
     await expect(
-      actualizarActivo(db, jefe, vacia, { nombre: "A", plantaId: planta, tipoMaquinaId: 9999, estadoOperativo: "OPERATIVA" }),
+      actualizarActivo(db, jefe, vacia, { nombre: "A", plantaId: planta, tipoMaquinaId: 9999, estadoOperativo: "ACTIVO" }),
     ).rejects.toThrow("ya no existe");
   });
 
@@ -187,7 +187,7 @@ describe.skipIf(!url)("tipos de máquina y árbol de sistemas (integración)", (
     const { tipo } = await tipoConPlantilla();
     const id = await crearActivo(db, jefe, { codigo: "A", nombre: "A", plantaId: planta, tipoMaquinaId: tipo });
     await expect(eliminarTipo(db, jefe, tipo)).rejects.toThrow("1 máquina usa este tipo");
-    await actualizarActivo(db, jefe, id, { nombre: "A", plantaId: planta, tipoMaquinaId: null, estadoOperativo: "OPERATIVA" });
+    await actualizarActivo(db, jefe, id, { nombre: "A", plantaId: planta, tipoMaquinaId: null, estadoOperativo: "ACTIVO" });
     await eliminarTipo(db, jefe, tipo);
     expect(await db.select().from(schema.tiposMaquina)).toHaveLength(0);
     expect(await db.select().from(schema.sistemasTipo)).toHaveLength(0);

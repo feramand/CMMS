@@ -111,9 +111,9 @@ describe.skipIf(!url)("horarios, feriados y edición de activos (integración)",
       condicionLlegada: "USADA", estadoOperativo: "FUERA_DE_SERVICIO",
     });
     expect(await db.select().from(schema.sectores)).toHaveLength(1);
-    const base = { nombre: "X", plantaId, estadoOperativo: "OPERATIVA" };
+    const base = { nombre: "X", plantaId, estadoOperativo: "ACTIVO" };
     await expect(actualizarActivo(db, jefe, id, { ...base, nombre: " " })).rejects.toThrow("nombre");
-    await expect(actualizarActivo(db, jefe, id, { ...base, estadoOperativo: "ROTA" })).rejects.toThrow("estado operativo");
+    await expect(actualizarActivo(db, jefe, id, { ...base, estadoOperativo: "ROTA" })).rejects.toThrow("estado del equipo");
     await expect(actualizarActivo(db, jefe, id, { ...base, anioLlegada: "16" })).rejects.toThrow("4 dígitos");
     await expect(actualizarActivo(db, jefe, id, { ...base, plantaId: 999 })).rejects.toThrow("planta");
     await expect(actualizarActivo(db, jefe, 999, base)).rejects.toThrow("no existe");

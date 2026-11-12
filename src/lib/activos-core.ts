@@ -52,7 +52,7 @@ export type DatosActivo = {
 
 const limpio = (v?: string) => v?.trim() || null;
 
-const ESTADOS = ["OPERATIVA", "DETENIDA", "FUERA_DE_SERVICIO"] as const;
+const ESTADOS = ["ACTIVO", "FUERA_DE_SERVICIO", "DESINSTALADO"] as const;
 export type EstadoOperativo = (typeof ESTADOS)[number];
 
 /** Campos comunes a la creación y a la edición, ya validados. */
@@ -90,7 +90,7 @@ async function resolverTipo(tx: Tx, datos: Pick<DatosActivo, "tipo" | "tipoMaqui
   return null;
 }
 
-/** Edita la ficha técnica y el estado operativo. El ID del activo no cambia. */
+/** Edita la ficha técnica y el estado del equipo. El ID del activo no cambia. */
 export async function actualizarActivo(
   db: DB,
   actor: UsuarioSesion,
@@ -99,7 +99,7 @@ export async function actualizarActivo(
 ): Promise<void> {
   exigirGestion(actor);
   if (!ESTADOS.includes(datos.estadoOperativo as EstadoOperativo)) {
-    throw new ErrorDeNegocio("Elige el estado operativo.");
+    throw new ErrorDeNegocio("Elige el estado del equipo.");
   }
   const campos = camposDeFicha({ ...datos, codigo: "" });
   try {

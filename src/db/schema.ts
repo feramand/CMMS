@@ -107,10 +107,13 @@ export const bitacora = pgTable("bitacora", {
 // ---------- Etapa 1: activos, solicitudes de atención (SAT) y órdenes de trabajo (OT) ----------
 
 export const condicionEnum = pgEnum("condicion_llegada", ["NUEVA", "USADA"]);
+// Estado del equipo. Una máquina desinstalada conserva su ficha e historial, pero ya no
+// admite solicitudes ni órdenes de trabajo nuevas. La detención momentánea por una falla no
+// es un estado de la ficha: se ve en sus solicitudes abiertas.
 export const estadoOperativoEnum = pgEnum("estado_operativo", [
-  "OPERATIVA",
-  "DETENIDA",
+  "ACTIVO",
   "FUERA_DE_SERVICIO",
+  "DESINSTALADO",
 ]);
 
 // Tipos de máquina (prensa offset plana, guillotina frontal…). Cada tipo tiene un árbol de
@@ -147,7 +150,7 @@ export const activos = pgTable("activos", {
     .notNull()
     .references(() => plantas.id),
   seccion: text("seccion"),
-  estadoOperativo: estadoOperativoEnum("estado_operativo").notNull().default("OPERATIVA"),
+  estadoOperativo: estadoOperativoEnum("estado_operativo").notNull().default("ACTIVO"),
   garantia: text("garantia"),
   // Código de la máquina en Metrics, para la integración de la etapa 2.
   codigoMetrics: text("codigo_metrics").unique(),

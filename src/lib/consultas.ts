@@ -145,6 +145,11 @@ export async function listarTecnicos() {
 
 export type Tecnico = Awaited<ReturnType<typeof listarTecnicos>>[number];
 
+/** Máquinas para elegir al reportar una falla o crear una OT: sin las desinstaladas. */
+export async function listarActivosVigentes() {
+  return (await listarActivos()).filter((a) => a.estadoOperativo !== "DESINSTALADO");
+}
+
 export function listarActivos() {
   return db
     .select({

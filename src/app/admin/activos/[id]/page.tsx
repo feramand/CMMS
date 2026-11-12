@@ -76,15 +76,15 @@ export default async function FichaActivo({ params, searchParams }: Props) {
         </section>
 
         <details className={tarjeta} open={Boolean(error)}>
-          <summary className="cursor-pointer text-lg font-semibold text-marca">Editar ficha y estado operativo</summary>
+          <summary className="cursor-pointer text-lg font-semibold text-marca">Editar ficha y estado del equipo</summary>
           <form action={accionActualizarActivo} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <input type="hidden" name="id" value={id} />
             <label className="flex flex-col gap-1 text-sm font-semibold">
-              Estado operativo
+              Estado del equipo
               <select name="estadoOperativo" defaultValue={m.estadoOperativo} className={campo}>
-                <option value="OPERATIVA">Operativa</option>
-                <option value="DETENIDA">Detenida</option>
+                <option value="ACTIVO">Activo</option>
                 <option value="FUERA_DE_SERVICIO">Fuera de servicio</option>
+                <option value="DESINSTALADO">Desinstalado</option>
               </select>
             </label>
             <label className="flex flex-col gap-1 text-sm font-semibold">

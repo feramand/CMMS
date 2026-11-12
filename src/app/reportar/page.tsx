@@ -6,7 +6,7 @@ import { CampoFotos } from "@/componentes/fotos";
 import { AvisoError, campo } from "@/componentes/ui";
 import { db } from "@/db";
 import { solicitudes, type Categoria } from "@/db/schema";
-import { listarActivos } from "@/lib/consultas";
+import { listarActivosVigentes } from "@/lib/consultas";
 import { exigirPerfil } from "@/lib/dal";
 import { puedeEntrarAdmin, rutaInicio } from "@/lib/perfiles";
 
@@ -21,7 +21,7 @@ export default async function Reportar({ searchParams }: { searchParams: Promise
   const usuario = await exigirPerfil("OPERADOR", "TECNICO", "JEFE_PLANIFICADOR", "ADMINISTRADOR");
   const { error, activo: pedido } = await searchParams;
   const [lista, [ultima]] = await Promise.all([
-    listarActivos(),
+    listarActivosVigentes(),
     db
       .select({ activoId: solicitudes.activoId })
       .from(solicitudes)

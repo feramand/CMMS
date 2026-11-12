@@ -9,9 +9,9 @@ import { exigirPerfil } from "@/lib/dal";
 import { accionCrearActivo } from "./actions";
 
 const ESTADO = {
-  OPERATIVA: { nombre: "Operativa", tono: "verde" },
-  DETENIDA: { nombre: "Detenida", tono: "ambar" },
-  FUERA_DE_SERVICIO: { nombre: "Fuera de servicio", tono: "gris" },
+  ACTIVO: { nombre: "Activo", tono: "verde" },
+  FUERA_DE_SERVICIO: { nombre: "Fuera de servicio", tono: "ambar" },
+  DESINSTALADO: { nombre: "Desinstalado", tono: "gris" },
 } as const;
 
 const CAMPOS: [string, string, boolean?][] = [

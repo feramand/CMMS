@@ -36,6 +36,13 @@
       "when": 1794499035931,
       "tag": "0004_quita_tipo_texto",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794500590982,
+      "tag": "0005_estado_del_equipo",
+      "breakpoints": true
     }
   ]
 }

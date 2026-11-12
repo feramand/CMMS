@@ -3,7 +3,7 @@ import { Dato } from "./ui";
 
 type Activo = typeof activos.$inferSelect;
 
-const ESTADO = { OPERATIVA: "Operativa", DETENIDA: "Detenida", FUERA_DE_SERVICIO: "Fuera de servicio" } as const;
+const ESTADO = { ACTIVO: "Activo", FUERA_DE_SERVICIO: "Fuera de servicio", DESINSTALADO: "Desinstalado" } as const;
 
 function fecha(iso: string | null): string {
   if (!iso) return "—";
@@ -18,7 +18,7 @@ export function FichaTecnica({ m, tipo }: { m: Activo; tipo: string | null }) {
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
       <Dato etiqueta="ID del activo">{m.codigo}</Dato>
       <Dato etiqueta="Tipo de máquina">{v(tipo)}</Dato>
-      <Dato etiqueta="Estado operativo">{ESTADO[m.estadoOperativo]}</Dato>
+      <Dato etiqueta="Estado del equipo">{ESTADO[m.estadoOperativo]}</Dato>
       <Dato etiqueta="Fabricante">{v(m.fabricante)}</Dato>
       <Dato etiqueta="Modelo">{v(m.modelo)}</Dato>
       <Dato etiqueta="Número de serie">{v(m.numeroSerie)}</Dato>

@@ -72,8 +72,14 @@ export async function crearOt(
     throw new ErrorDeNegocio("La fecha programada no es válida.");
   }
   return db.transaction(async (tx) => {
-    const [activo] = await tx.select({ id: activos.id }).from(activos).where(eq(activos.id, datos.activoId));
+    const [activo] = await tx
+      .select({ id: activos.id, estado: activos.estadoOperativo })
+      .from(activos)
+      .where(eq(activos.id, datos.activoId));
     if (!activo) throw new ErrorDeNegocio("Elige una máquina.");
+    if (activo.estado === "DESINSTALADO") {
+      throw new ErrorDeNegocio("Esta máquina está desinstalada: no admite órdenes de trabajo nuevas.");
+    }
     const [esp] = await tx
       .select({ id: especialidades.id })
       .from(especialidades)

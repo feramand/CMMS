@@ -5,7 +5,7 @@ import { Encabezado } from "@/componentes/encabezado";
 import { AvisoError, botonPrimario, campo, ChipOt, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
 import { especialidades } from "@/db/schema";
-import { listarActivos, listarOts, listarTecnicos } from "@/lib/consultas";
+import { listarActivosVigentes, listarOts, listarTecnicos } from "@/lib/consultas";
 import { exigirPerfil } from "@/lib/dal";
 import { fechaHora } from "@/lib/tiempo";
 
@@ -14,7 +14,7 @@ export default async function Ordenes({ searchParams }: { searchParams: Promise<
   const { error } = await searchParams;
   const [lista, listaActivos, tecnicos, esp] = await Promise.all([
     listarOts(),
-    listarActivos(),
+    listarActivosVigentes(),
     listarTecnicos(),
     db.select().from(especialidades).where(eq(especialidades.activa, true)).orderBy(asc(especialidades.nombre)),
   ]);

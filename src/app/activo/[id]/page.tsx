@@ -47,7 +47,14 @@ export default async function FichaPorQr({ params }: { params: Promise<{ id: str
             {m.seccion ? ` · ${m.seccion}` : ""}
           </p>
         </div>
-        {puedeReportar && m.activo && (
+        {m.estadoOperativo !== "ACTIVO" && (
+          <p role="status" className="rounded-lg bg-amber-100 px-4 py-3 text-lg font-semibold text-amber-900">
+            {m.estadoOperativo === "DESINSTALADO"
+              ? "Equipo desinstalado. Se conserva su ficha y su historial."
+              : "Equipo fuera de servicio."}
+          </p>
+        )}
+        {puedeReportar && m.activo && m.estadoOperativo !== "DESINSTALADO" && (
           <Link
             href={`/reportar?activo=${id}`}
             className="flex h-16 items-center justify-center rounded-xl bg-amber-700 text-xl font-bold text-white"

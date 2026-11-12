@@ -72,12 +72,15 @@ export async function crearSolicitud(
   const comentario = datos.comentario?.trim() || null;
   return db.transaction(async (tx) => {
     const [activo] = await tx
-      .select({ id: activos.id, nombre: activos.nombre, activo: activos.activo })
+      .select({ id: activos.id, nombre: activos.nombre, activo: activos.activo, estado: activos.estadoOperativo })
       .from(activos)
       .where(eq(activos.id, datos.activoId))
       // Bloquea la fila de la máquina: dos reportes simultáneos no crean dos solicitudes.
       .for("update");
     if (!activo || !activo.activo) throw new ErrorDeNegocio("Elige una máquina.");
+    if (activo.estado === "DESINSTALADO") {
+      throw new ErrorDeNegocio("Esta máquina está desinstalada: no admite solicitudes nuevas.");
+    }
 
     const [abierta] = await tx
       .select({ id: solicitudes.id })
