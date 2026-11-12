@@ -165,12 +165,14 @@ export async function accionSolicitarRepuesto(formData: FormData) {
   const actor = await exigirSesion();
   const solicitudId = entero(formData.get("solicitudId")) || null;
   const otId = entero(formData.get("otId")) || null;
-  const vuelta = otId ? `/ot/${otId}` : `/sat/${solicitudId}`;
-  await ejecutar(`/repuesto?${otId ? `ot=${otId}` : `sat=${solicitudId}`}`, async () => {
+  const cicloId = entero(formData.get("cicloId")) || null;
+  const vuelta = otId ? `/ot/${otId}` : solicitudId ? `/sat/${solicitudId}` : `/pauta/${cicloId}`;
+  await ejecutar(`/repuesto?${otId ? `ot=${otId}` : solicitudId ? `sat=${solicitudId}` : `pauta=${cicloId}`}`, async () => {
     const fotos = await fotosDeFormulario(formData);
     const repuestoId = await solicitarRepuesto(db, actor, {
       solicitudId,
       otId,
+      cicloId,
       cantidad: Number(formData.get("cantidad")),
       codigoFabricante: texto(formData.get("codigoFabricante")),
       descripcion: texto(formData.get("descripcion")),

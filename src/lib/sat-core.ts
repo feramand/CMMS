@@ -69,6 +69,24 @@ export async function crearSolicitud(
   if (datos.categoria === "SERVICIOS_GENERALES" && !esAdministrativo(actor)) {
     throw new ErrorDeNegocio("Elige el tipo de falla.");
   }
+  const origen = actor.perfil === "OPERADOR" ? "OPERADOR" : actor.perfil === "TECNICO" ? "TECNICO" : "JEFE";
+  return registrarSolicitud(db, { ...datos, origen, creadaPor: actor.id });
+}
+
+/**
+ * Crea la solicitud sin revisar permisos: la usan el reporte de una persona y la detención
+ * que llega de Metrics (sin usuario del CMMS, con el id y la hora de la detención).
+ */
+export async function registrarSolicitud(
+  db: DB,
+  datos: DatosSolicitud & {
+    origen: "METRICS" | "OPERADOR" | "TECNICO" | "JEFE";
+    creadaPor: number | null;
+    idDetencionMetrics?: string;
+    detenidaEn?: Date;
+  },
+): Promise<{ id: number; duplicada: boolean }> {
+  const actor = { id: datos.creadaPor };
   const comentario = datos.comentario?.trim() || null;
   return db.transaction(async (tx) => {
     const [activo] = await tx
@@ -96,20 +114,25 @@ export async function crearSolicitud(
     if (abierta) {
       await tx
         .insert(avisosSolicitud)
-        .values({ solicitudId: abierta.id, usuarioId: actor.id, comentario });
+        .values({
+          solicitudId: abierta.id,
+          usuarioId: actor.id,
+          comentario,
+          idDetencionMetrics: datos.idDetencionMetrics ?? null,
+        });
       return { id: abierta.id, duplicada: true };
     }
 
-    const origen =
-      actor.perfil === "OPERADOR" ? "OPERADOR" : actor.perfil === "TECNICO" ? "TECNICO" : "JEFE";
     const [nueva] = await tx
       .insert(solicitudes)
       .values({
         activoId: datos.activoId,
         categoria: datos.categoria,
-        origen,
+        origen: datos.origen,
         creadaPor: actor.id,
         comentario,
+        idDetencionMetrics: datos.idDetencionMetrics ?? null,
+        detenidaEn: datos.detenidaEn ?? null,
       })
       .returning({ id: solicitudes.id });
 

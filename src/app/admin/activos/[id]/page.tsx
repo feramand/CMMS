@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Encabezado } from "@/componentes/encabezado";
@@ -6,13 +6,16 @@ import { ArbolEditable } from "@/componentes/arbol-sistemas";
 import { FichaTecnica } from "@/componentes/ficha-tecnica";
 import { AvisoError, botonPrimario, botonSecundario, campo, ChipOt, ChipSat, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { activos, ordenesTrabajo, plantas, sectores, solicitudes, solicitudesRepuesto, tiposMaquina } from "@/db/schema";
+import { activos, lecturasContador, ordenesTrabajo, pautas, plantas, sectores, solicitudes, solicitudesRepuesto, tiposMaquina } from "@/db/schema";
 import { aplanar } from "@/lib/arbol";
 import { nombreCategoria } from "@/lib/categorias";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
 import { exigirPerfil } from "@/lib/dal";
 import { fallasRecurrentes } from "@/lib/indicadores";
 import { duracion, fechaHora, minutosEntre } from "@/lib/tiempo";
+import { accionRegistrarLectura } from "@/app/preventivo/actions";
+import { BarraAvance, ChipPauta } from "@/componentes/pautas";
+import { intervaloTexto, listarPautas } from "@/lib/consultas-pautas";
 import { accionAplicarPlantilla } from "../../tipos/actions";
 import { accionActualizarActivo } from "../actions";
 
@@ -31,7 +34,9 @@ export default async function FichaActivo({ params, searchParams }: Props) {
     .where(eq(activos.id, id));
   if (!a) notFound();
   const m = a.activo;
-  const [listaPlantas, listaTipos, todosLosSistemas, sats, ots, repuestos] = await Promise.all([
+  const [listaPautas, lecturas, listaPlantas, listaTipos, todosLosSistemas, sats, ots, repuestos] = await Promise.all([
+    listarPautas(eq(pautas.activoId, id)),
+    db.select().from(lecturasContador).where(eq(lecturasContador.activoId, id)).orderBy(desc(lecturasContador.leidaEn), desc(lecturasContador.id)).limit(5),
     db.select().from(plantas).orderBy(asc(plantas.nombre)),
     db.select().from(tiposMaquina).orderBy(asc(tiposMaquina.nombre)),
     db.select().from(sectores).where(eq(sectores.activoId, id)),
@@ -70,8 +75,7 @@ export default async function FichaActivo({ params, searchParams }: Props) {
           <h2 className="text-lg font-bold">Ficha técnica</h2>
           <FichaTecnica m={m} tipo={a.tipo} />
           <p className="text-sm text-slate-600">
-            «Última preventiva» y «Último MP» se llenan solos al registrar una mantención preventiva por giros o
-            por tiempo (etapa 2).
+            «Última preventiva» y «Último MP» se llenan solos al finalizar una pauta preventiva.
           </p>
         </section>
 
@@ -171,6 +175,53 @@ export default async function FichaActivo({ params, searchParams }: Props) {
             no se borran: dejan de aparecer en las listas.
           </p>
           <ArbolEditable nodos={sistemas} ambito="activo" duenoId={id} />
+        </section>
+
+        <section className={`${tarjeta} flex flex-col gap-3`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-bold">Pautas preventivas · {listaPautas.length}</h2>
+            <Link href="/admin/preventivo" className="text-marca underline">
+              Crear o planificar pautas
+            </Link>
+          </div>
+          {listaPautas.length === 0 && <p className="text-slate-600">Esta máquina no tiene pautas.</p>}
+          {listaPautas.map((p) => (
+            <div key={p.id} className="flex flex-col gap-1 border-t border-slate-200 pt-2">
+              <div className="flex items-center justify-between gap-2">
+                <Link href={`/admin/preventivo/${p.id}`} className="text-marca underline">
+                  {p.nombre} · {intervaloTexto(p.tipo, p.intervalo)}
+                </Link>
+                <ChipPauta p={p} />
+              </div>
+              {p.ciclo && p.resumen && p.activa && <BarraAvance avance={p.resumen.avance} liberada={p.ciclo.estado === "LIBERADA"} />}
+            </div>
+          ))}
+        </section>
+
+        <section className={`${tarjeta} flex flex-col gap-3`}>
+          <h2 className="text-lg font-bold">Contador de giros</h2>
+          <form action={accionRegistrarLectura} className="flex flex-wrap items-end gap-2">
+            <input type="hidden" name="activoId" value={id} />
+            <label className="flex flex-col gap-1 text-sm font-semibold">
+              Giros acumulados (lectura manual)
+              <input name="giros" inputMode="numeric" required placeholder={m.girosAcumulados?.toLocaleString("es-CL") ?? "0"} className={`${campo} max-w-xs`} />
+            </label>
+            <button type="submit" className={botonPrimario}>
+              Registrar lectura
+            </button>
+          </form>
+          <p className="text-sm text-slate-600">
+            Con Metrics conectado las lecturas llegan solas. El contador solo avanza: no se acepta una lectura menor que la última.
+          </p>
+          {lecturas.length > 0 && (
+            <ul className="flex flex-col gap-1 text-slate-700">
+              {lecturas.map((l) => (
+                <li key={l.id}>
+                  {fechaHora(l.leidaEn)} · {l.giros.toLocaleString("es-CL")} giros · {l.origen === "METRICS" ? "Metrics" : "manual"}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         {recurrentes.length > 0 && (

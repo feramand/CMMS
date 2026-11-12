@@ -9,10 +9,12 @@ const MENU_ADMIN = [
   { href: "/admin/tablero", nombre: "Tablero" },
   { href: "/admin/solicitudes", nombre: "Solicitudes" },
   { href: "/admin/ot", nombre: "Órdenes de trabajo" },
+  { href: "/admin/preventivo", nombre: "Preventivo" },
   { href: "/admin/activos", nombre: "Activos" },
   { href: "/admin/tipos", nombre: "Tipos de máquina" },
   { href: "/admin/usuarios", nombre: "Usuarios" },
   { href: "/admin/carga", nombre: "Carga inicial" },
+  { href: "/admin/metrics", nombre: "Metrics" },
   { href: "/admin/configuracion", nombre: "Configuración" },
 ];
 

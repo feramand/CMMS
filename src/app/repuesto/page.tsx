@@ -5,21 +5,31 @@ import { accionSolicitarRepuesto } from "@/app/trabajos/actions";
 import { Encabezado } from "@/componentes/encabezado";
 import { CampoFotos } from "@/componentes/fotos";
 import { AvisoError, campo, tarjeta } from "@/componentes/ui";
-import { ordenesTrabajo, solicitudes } from "@/db/schema";
+import { db } from "@/db";
+import { activos, ciclosPauta, ordenesTrabajo, pautas, solicitudes } from "@/db/schema";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
 import { exigirPerfil } from "@/lib/dal";
 
-type Props = { searchParams: Promise<{ sat?: string; ot?: string; error?: string }> };
+type Props = { searchParams: Promise<{ sat?: string; ot?: string; pauta?: string; error?: string }> };
 
 export default async function SolicitarRepuesto({ searchParams }: Props) {
   const usuario = await exigirPerfil("TECNICO", "JEFE_PLANIFICADOR", "ADMINISTRADOR");
-  const { sat, ot, error } = await searchParams;
+  const { sat, ot, pauta: deCiclo, error } = await searchParams;
   const otId = Number(ot) || null;
   const solicitudId = Number(sat) || null;
   const [orden] = otId ? await listarOts(eq(ordenesTrabajo.id, otId), 1) : [];
   const [solicitud] = !otId && solicitudId ? await listarSolicitudes(eq(solicitudes.id, solicitudId), 1) : [];
-  if (!orden && !solicitud) notFound();
-  const vuelta = orden ? `/ot/${orden.id}` : `/sat/${solicitud!.id}`;
+  const cicloId = !orden && !solicitud ? Number(deCiclo) || null : null;
+  const [ciclo] = cicloId
+    ? await db
+        .select({ id: ciclosPauta.id, pauta: pautas.nombre, activo: activos.nombre })
+        .from(ciclosPauta)
+        .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+        .innerJoin(activos, eq(activos.id, pautas.activoId))
+        .where(eq(ciclosPauta.id, cicloId))
+    : [];
+  if (!orden && !solicitud && !ciclo) notFound();
+  const vuelta = orden ? `/ot/${orden.id}` : solicitud ? `/sat/${solicitud.id}` : `/pauta/${ciclo.id}`;
   return (
     <>
       <Encabezado usuario={usuario} />
@@ -34,14 +44,20 @@ export default async function SolicitarRepuesto({ searchParams }: Props) {
         <section className={`${tarjeta} flex flex-col`}>
           <span className="text-sm text-slate-600">Para</span>
           <span className="text-lg font-semibold">
-            {orden ? `${orden.activo} · OT ${orden.folio}` : `${solicitud!.activo} · solicitud en atención`}
+            {orden
+              ? `${orden.activo} · OT ${orden.folio}`
+              : solicitud
+                ? `${solicitud.activo} · solicitud en atención`
+                : `${ciclo.activo} · pauta ${ciclo.pauta}`}
           </span>
         </section>
         <form action={accionSolicitarRepuesto} className="flex flex-1 flex-col gap-4">
           {orden ? (
             <input type="hidden" name="otId" value={orden.id} />
+          ) : solicitud ? (
+            <input type="hidden" name="solicitudId" value={solicitud.id} />
           ) : (
-            <input type="hidden" name="solicitudId" value={solicitud!.id} />
+            <input type="hidden" name="cicloId" value={ciclo.id} />
           )}
           <label className="flex flex-col gap-1 text-base font-semibold">
             Descripción

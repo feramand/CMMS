@@ -12,6 +12,8 @@ import {
   type EstadoOt,
   type Prioridad,
   type TipoOt,
+  ciclosPauta,
+  pautas,
 } from "@/db/schema";
 import type { UsuarioSesion } from "./auth-core";
 import { idsPorPerfil, notificar } from "./notificar";
@@ -250,12 +252,13 @@ export async function guardarCausaRaiz(
 export type DatosRepuesto = {
   solicitudId?: number | null;
   otId?: number | null;
+  cicloId?: number | null;
   cantidad: number;
   codigoFabricante?: string | null;
   descripcion: string;
 };
 
-/** Solicitud de repuesto desde una SAT o una OT. La máquina se hereda del trabajo. */
+/** Solicitud de repuesto desde una SAT, una OT o una pauta. La máquina se hereda del trabajo. */
 export async function solicitarRepuesto(
   db: DB,
   actor: UsuarioSesion,
@@ -283,14 +286,22 @@ export async function solicitarRepuesto(
         .from(solicitudes)
         .where(eq(solicitudes.id, datos.solicitudId));
       activoId = s?.activoId;
+    } else if (datos.cicloId) {
+      const [c] = await tx
+        .select({ activoId: pautas.activoId })
+        .from(ciclosPauta)
+        .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+        .where(eq(ciclosPauta.id, datos.cicloId));
+      activoId = c?.activoId;
     }
-    if (!activoId) throw new ErrorDeNegocio("El repuesto debe pedirse desde una solicitud o una orden de trabajo.");
+    if (!activoId) throw new ErrorDeNegocio("El repuesto debe pedirse desde una solicitud, una orden de trabajo o una pauta.");
     const [nueva] = await tx
       .insert(solicitudesRepuesto)
       .values({
         activoId,
-        solicitudId: datos.otId ? null : datos.solicitudId,
+        solicitudId: datos.otId ? null : (datos.solicitudId ?? null),
         otId: datos.otId ?? null,
+        cicloId: datos.otId || datos.solicitudId ? null : (datos.cicloId ?? null),
         solicitanteId: actor.id,
         cantidad: datos.cantidad,
         codigoFabricante: datos.codigoFabricante?.trim() || null,

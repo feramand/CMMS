@@ -331,7 +331,7 @@ describe.skipIf(!url)("solicitudes y órdenes de trabajo (integración)", () => 
     expect(await avisosDe(bodeguero)).toContain("Solicitud de repuesto: 2 × Rodamiento");
     await expect(solicitarRepuesto(db, mec1, { solicitudId: id, cantidad: 0, descripcion: "x" })).rejects.toThrow("cantidad");
     await expect(solicitarRepuesto(db, mec1, { solicitudId: id, cantidad: 1.5, descripcion: "x" })).rejects.toThrow("cantidad");
-    await expect(solicitarRepuesto(db, mec1, { cantidad: 1, descripcion: "x" })).rejects.toThrow("solicitud o una orden");
+    await expect(solicitarRepuesto(db, mec1, { cantidad: 1, descripcion: "x" })).rejects.toThrow("solicitud, una orden");
     await expect(solicitarRepuesto(db, operador, { solicitudId: id, cantidad: 1, descripcion: "x" })).rejects.toThrow(ErrorDeNegocio);
   });
 

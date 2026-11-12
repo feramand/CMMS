@@ -27,6 +27,7 @@ export async function proxy(request: NextRequest) {
   return NextResponse.next();
 }
 
+// Las direcciones de /api/metrics no usan sesión: las protege la clave del conector.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|logo-print-garage.png|icon.png|iconos/).*)"],
+  matcher: ["/((?!api/metrics|_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|logo-print-garage.png|icon.png|iconos/).*)"],
 };
