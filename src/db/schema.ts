@@ -400,6 +400,8 @@ export const pautas = pgTable("pautas", {
     .notNull()
     .references(() => especialidades.id),
   // Porcentajes propios de la pauta; null = los generales de Configuración.
+  // Frecuencia teórica de la cartilla (quincenal, semestral…). Solo de referencia para quien planifica.
+  frecuencia: text("frecuencia"),
   pctLiberacion: integer("pct_liberacion"),
   pctLimite: integer("pct_limite"),
   activa: boolean("activa").notNull().default(true),
@@ -414,8 +416,18 @@ export const actividadesPauta = pgTable("actividades_pauta", {
     .references(() => pautas.id, { onDelete: "cascade" }),
   orden: integer("orden").notNull(),
   descripcion: text("descripcion").notNull(),
-  // Quién hace la actividad: los operadores, o los técnicos de una especialidad.
-  // Sin ninguno de los dos, la hace la especialidad responsable de la cartilla.
+  // Ficha de la tarea, tal como viene en la cartilla del fabricante o de la planta.
+  codigo: text("codigo"),
+  zona: text("zona"),
+  subsistema: text("subsistema"),
+  componente: text("componente"),
+  tipoTarea: text("tipo_tarea"),
+  // ¿Exige la máquina detenida? SI, NO o PARCIAL.
+  detencion: text("detencion"),
+  insumos: text("insumos"),
+  minutos: integer("minutos"),
+  // Quién hace la actividad: los operadores, los técnicos de una especialidad, o cualquiera
+  // de los dos (operador y especialidad a la vez). Sin ninguno: la especialidad responsable.
   operador: boolean("operador").notNull().default(false),
   especialidadId: integer("especialidad_id").references(() => especialidades.id),
   activa: boolean("activa").notNull().default(true),
@@ -465,7 +477,19 @@ export const actividadesCiclo = pgTable("actividades_ciclo", {
   descripcion: text("descripcion").notNull(),
   estado: estadoActividadEnum("estado").notNull().default("PENDIENTE"),
   nota: text("nota"),
-  // Grupo que la hace, ya resuelto al liberar: operadores o una especialidad.
+  // Ficha de la tarea, tal como viene en la cartilla del fabricante o de la planta.
+  codigo: text("codigo"),
+  zona: text("zona"),
+  subsistema: text("subsistema"),
+  componente: text("componente"),
+  tipoTarea: text("tipo_tarea"),
+  // ¿Exige la máquina detenida? SI, NO o PARCIAL.
+  detencion: text("detencion"),
+  insumos: text("insumos"),
+  minutos: integer("minutos"),
+  // Por qué no se realizó: EN_PRODUCCION, SIN_TECNICO, OTRO_TRABAJO u OTRO.
+  motivo: text("motivo"),
+  // Grupo que la hace, ya resuelto al liberar: operadores, una especialidad, o ambos.
   operador: boolean("operador").notNull().default(false),
   especialidadId: integer("especialidad_id").references(() => especialidades.id),
   marcadaPor: integer("marcada_por").references(() => usuarios.id),

@@ -236,3 +236,24 @@ export async function eliminarSector(db: DB, actor: UsuarioSesion, id: number): 
     return "BORRADO";
   });
 }
+
+/**
+ * Deja en el árbol de la máquina la ruta indicada (sistema › subsistema › componente), creando
+ * lo que falte. No reactiva lo desactivado ni toca lo existente. Sin control de permisos: uso interno.
+ */
+export async function asegurarRuta(db: Conexion, activoId: number, nombres: string[]): Promise<void> {
+  const propios = await db.select().from(sectores).where(eq(sectores.activoId, activoId));
+  let padre: number | null = null;
+  for (const crudo of nombres.slice(0, MAX_NIVELES)) {
+    const nombre = crudo.trim().replace(/\s+/g, " ").slice(0, 80);
+    if (!nombre) return;
+    const existente = propios.find((n) => n.padreId === padre && mismoNombre(n.nombre, nombre));
+    if (existente) {
+      padre = existente.id;
+      continue;
+    }
+    const creados: (typeof propios)[number][] = await db.insert(sectores).values({ activoId, padreId: padre, nombre }).returning();
+    propios.push(creados[0]);
+    padre = creados[0].id;
+  }
+}

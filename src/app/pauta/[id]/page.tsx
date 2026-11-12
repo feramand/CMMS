@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { accionFinalizarPauta, accionMarcarActividad, accionOtDesdePauta } from "@/app/preventivo/actions";
@@ -19,9 +19,10 @@ import {
 import { resumenCiclo } from "@/lib/consultas-pautas";
 import { exigirPerfil } from "@/lib/dal";
 import { rutaInicio } from "@/lib/perfiles";
-import { fechaHora, partesEnChile } from "@/lib/tiempo";
+import { MOTIVOS_NO_REALIZADA, type MotivoNoRealizada } from "@/lib/pautas-core";
+import { duracion, fechaHora, partesEnChile } from "@/lib/tiempo";
 
-type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; aviso?: string }> };
+type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; aviso?: string; g?: string; d?: string }> };
 
 const AVISOS: Record<string, string> = {
   finalizada: "Pauta finalizada. El ciclo siguiente quedó programado.",
@@ -33,7 +34,7 @@ const AVISOS: Record<string, string> = {
 export default async function EjecutarPauta({ params, searchParams }: Props) {
   const usuario = await exigirPerfil("TECNICO", "OPERADOR", "JEFE_PLANIFICADOR", "ADMINISTRADOR");
   const id = Number((await params).id);
-  const { error, aviso } = await searchParams;
+  const { error, aviso, g: filtroGrupo, d: filtroDetencion } = await searchParams;
   if (!Number.isInteger(id)) notFound();
   const [f] = await db
     .select({ ciclo: ciclosPauta, pauta: pautas, activo: activos.nombre, giros: activos.girosAcumulados, unidad: activos.unidadContador, especialidad: especialidades.nombre })
@@ -44,7 +45,13 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
     .where(eq(ciclosPauta.id, id));
   if (!f) notFound();
   const { ciclo: c, pauta } = f;
-  const [checklist, [ficha], [ejecutor], repuestos, ots, listaEsp, marcadores] = await Promise.all([
+  const [hermanas, checklist, [ficha], [ejecutor], repuestos, ots, listaEsp, marcadores] = await Promise.all([
+    db
+      .select({ cicloId: ciclosPauta.id, nombre: pautas.nombre })
+      .from(ciclosPauta)
+      .innerJoin(pautas, eq(pautas.id, ciclosPauta.pautaId))
+      .where(and(eq(pautas.activoId, pauta.activoId), eq(pautas.activa, true), eq(ciclosPauta.estado, "LIBERADA")))
+      .orderBy(asc(pautas.nombre)),
     db.select().from(actividadesCiclo).where(eq(actividadesCiclo.cicloId, id)).orderBy(asc(actividadesCiclo.orden), asc(actividadesCiclo.id)),
     db.select({ esp: fichasTecnico.especialidadId }).from(fichasTecnico).where(eq(fichasTecnico.usuarioId, usuario.id)),
     c.ejecutadoPor ? db.select({ nombre: usuarios.nombre }).from(usuarios).where(eq(usuarios.id, c.ejecutadoPor)) : [],
@@ -61,13 +68,33 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
   const gestiona = usuario.perfil === "ADMINISTRADOR" || usuario.perfil === "JEFE_PLANIFICADOR";
   const esOperador = usuario.perfil === "OPERADOR";
   // Cada grupo marca solo sus actividades: los operadores las de operador, cada técnico las de su especialidad.
-  const esMia = (a: (typeof checklist)[number]) => gestiona || (a.operador ? esOperador : !esOperador && a.especialidadId === ficha?.esp);
+  const esMia = (a: (typeof checklist)[number]) => gestiona || (a.operador && esOperador) || (!esOperador && a.especialidadId !== null && a.especialidadId === ficha?.esp);
   const participa = gestiona || checklist.some(esMia) || (checklist.length === 0 && !esOperador && ficha?.esp === pauta.especialidadId);
   const puede = c.estado === "LIBERADA" && participa;
   const hechas = checklist.filter((a) => a.estado !== "PENDIENTE").length;
   const pendientes = checklist.length - hechas;
-  const nombreGrupo = (a: (typeof checklist)[number]) => (a.operador ? "Operador" : (listaEsp.find((e) => e.id === a.especialidadId)?.nombre ?? "—"));
-  const grupos = [...new Set(checklist.map(nombreGrupo))].sort((a, b) => Number(a !== "Operador") - Number(b !== "Operador") || a.localeCompare(b, "es"));
+  const nombreGrupo = (a: (typeof checklist)[number]) => {
+    const esp = listaEsp.find((e) => e.id === a.especialidadId)?.nombre;
+    return a.operador ? (esp ? `Operador / ${esp}` : "Operador") : (esp ?? "—");
+  };
+  const grupos = [...new Set(checklist.map(nombreGrupo))].sort((a, b) => Number(!a.startsWith("Operador")) - Number(!b.startsWith("Operador")) || a.localeCompare(b, "es"));
+  const DETENCION = { SI: "Máquina detenida", NO: "Máquina en marcha", PARCIAL: "Detención parcial" } as const;
+  const detenciones = (["SI", "PARCIAL", "NO"] as const).filter((d) => checklist.some((a) => a.detencion === d));
+  // Filtros: por encargado y por detención. La pauta se cambia con la fila de botones de arriba.
+  const visibles = checklist.filter(
+    (a) => (!filtroGrupo || nombreGrupo(a) === filtroGrupo) && (!filtroDetencion || a.detencion === filtroDetencion),
+  );
+  const minutos = (lista: typeof checklist) => lista.reduce((t, a) => t + (a.minutos ?? 0), 0);
+  const enlace = (cambios: { g?: string | null; d?: string | null }) => {
+    const q = new URLSearchParams();
+    const g = cambios.g === undefined ? filtroGrupo : cambios.g;
+    const d = cambios.d === undefined ? filtroDetencion : cambios.d;
+    if (g) q.set("g", g);
+    if (d) q.set("d", d);
+    return `/pauta/${id}${q.size ? `?${q}` : ""}`;
+  };
+  const boton = (activo: boolean) =>
+    `flex h-11 items-center rounded-full border px-4 text-base ${activo ? "border-marca bg-marca font-semibold text-white" : "border-slate-400 bg-white text-slate-900"}`;
   const esGiros = pauta.tipo === "GIROS";
   return (
     <>
@@ -103,13 +130,25 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
               <Chip tono="gris">Programada</Chip>
             )}
           </Dato>
-          <Dato etiqueta="Avance del intervalo">{resumen.avance} %</Dato>
-          <Dato etiqueta="Objetivo">{resumen.objetivo}</Dato>
-          <Dato etiqueta="Límite">{resumen.limite}</Dato>
-          {esGiros && <Dato etiqueta="Contador actual">{f.giros === null ? "—" : `${f.giros.toLocaleString("es-CL")} ${f.unidad}`}</Dato>}
+          {/* El operador ve el estado y sus tareas; los intervalos son de quien planifica y ejecuta. */}
+          {!esOperador && (
+            <>
+              <Dato etiqueta="Avance del intervalo">{resumen.avance} %</Dato>
+              <Dato etiqueta="Objetivo">{resumen.objetivo}</Dato>
+              <Dato etiqueta="Límite">{resumen.limite}</Dato>
+            </>
+          )}
+          {esGiros && !esOperador && <Dato etiqueta="Contador actual">{f.giros === null ? "—" : `${f.giros.toLocaleString("es-CL")} ${f.unidad}`}</Dato>}
           {c.estado === "EJECUTADA" && (
             <>
-              <Dato etiqueta="Ejecutó">{ejecutor?.nombre ?? "—"}</Dato>
+              <Dato etiqueta="Resultado">
+                {checklist.every((a) => a.estado === "HECHA")
+                  ? "Realizada"
+                  : checklist.some((a) => a.estado === "HECHA")
+                    ? "Realizada parcial"
+                    : "No realizada"}
+              </Dato>
+              <Dato etiqueta="Cerró">{ejecutor?.nombre ?? "—"}</Dato>
               <Dato etiqueta="Finalizada">{fechaHora(c.cerradoEn)}</Dato>
               {esGiros && <Dato etiqueta="Contador al ejecutar">{c.girosReales?.toLocaleString("es-CL") ?? "—"}</Dato>}
             </>
@@ -121,25 +160,81 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
         {c.estado !== "PROGRAMADA" && (
           <section className="flex flex-col gap-2">
             <h2 className="text-lg font-bold">
-              Checklist · {hechas} de {checklist.length}
+              Tareas · {hechas} de {checklist.length}
+              {minutos(checklist) > 0 ? ` · ${duracion(minutos(checklist))} estimados` : ""}
             </h2>
-            {checklist.length === 0 && <p className="text-slate-600">Esta pauta no tiene actividades.</p>}
-            {grupos.map((g) => (
-              <div key={g} className="flex flex-col gap-2">
-                {grupos.length > 1 && (
-                  <h3 className="mt-2 text-base font-bold text-slate-700">
-                    {g} · {checklist.filter((a) => nombreGrupo(a) === g && a.estado !== "PENDIENTE").length} de{" "}
-                    {checklist.filter((a) => nombreGrupo(a) === g).length}
-                  </h3>
-                )}
-            {checklist.filter((a) => nombreGrupo(a) === g).map((a) => (
+            {checklist.length === 0 && <p className="text-slate-600">Esta pauta no tiene tareas.</p>}
+            {hermanas.length > 1 && (
+              <nav aria-label="Pauta" className="flex flex-wrap items-center gap-2">
+                <span className="w-24 text-sm font-semibold text-slate-600">Pauta</span>
+                {hermanas.map((h) => (
+                  <Link key={h.cicloId} href={`/pauta/${h.cicloId}`} aria-current={h.cicloId === id ? "page" : undefined} className={boton(h.cicloId === id)}>
+                    {h.nombre.replace(/^Pauta\s+/i, "")}
+                  </Link>
+                ))}
+              </nav>
+            )}
+            {grupos.length > 1 && (
+              <nav aria-label="Encargado" className="flex flex-wrap items-center gap-2">
+                <span className="w-24 text-sm font-semibold text-slate-600">Encargado</span>
+                <Link href={enlace({ g: null })} className={boton(!filtroGrupo)}>
+                  Todos
+                </Link>
+                {grupos.map((g) => (
+                  <Link key={g} href={enlace({ g })} aria-current={filtroGrupo === g ? "true" : undefined} className={boton(filtroGrupo === g)}>
+                    {g}
+                  </Link>
+                ))}
+              </nav>
+            )}
+            {detenciones.length > 1 && (
+              <nav aria-label="Detención" className="flex flex-wrap items-center gap-2">
+                <span className="w-24 text-sm font-semibold text-slate-600">Detención</span>
+                <Link href={enlace({ d: null })} className={boton(!filtroDetencion)}>
+                  Todas
+                </Link>
+                {detenciones.map((d) => (
+                  <Link key={d} href={enlace({ d })} aria-current={filtroDetencion === d ? "true" : undefined} className={boton(filtroDetencion === d)}>
+                    {DETENCION[d]}
+                  </Link>
+                ))}
+              </nav>
+            )}
+            {(filtroGrupo || filtroDetencion) && (
+              <p className="text-sm text-slate-600">
+                Mostrando {visibles.length} de {checklist.length} tareas
+                {minutos(visibles) > 0 ? ` · ${duracion(minutos(visibles))} estimados` : ""}.
+              </p>
+            )}
+            {visibles.map((a) => (
               <div key={a.id} className={`${tarjeta} flex flex-col gap-2`}>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600">
+                  {a.codigo && <span className="font-semibold">{a.codigo}</span>}
+                  <span>{[a.zona, a.subsistema, a.componente].filter(Boolean).join(" › ")}</span>
+                </div>
                 <div className="flex items-start justify-between gap-2">
-                  <span className="text-lg">{a.descripcion}</span>
+                  <span className="whitespace-pre-line text-lg">{a.descripcion}</span>
                   {a.estado === "HECHA" && <Chip tono="verde">Hecha</Chip>}
                   {a.estado === "NO_REALIZADA" && <Chip tono="rojo">No realizada</Chip>}
                 </div>
-                {a.nota && <span className="text-slate-700">Nota: {a.nota}</span>}
+                <div className="flex flex-wrap gap-2">
+                  <Chip tono="azul">{nombreGrupo(a)}</Chip>
+                  {a.tipoTarea && <Chip tono="gris">{a.tipoTarea}</Chip>}
+                  {a.detencion && <Chip tono={a.detencion === "NO" ? "verde" : "ambar"}>{DETENCION[a.detencion as keyof typeof DETENCION] ?? a.detencion}</Chip>}
+                  {a.minutos !== null && <Chip tono="gris">{a.minutos} min</Chip>}
+                </div>
+                {a.insumos && (
+                  <details>
+                    <summary className="cursor-pointer py-1 text-marca">Insumos</summary>
+                    <p className="text-slate-700">{a.insumos}</p>
+                  </details>
+                )}
+                {a.estado === "NO_REALIZADA" && (
+                  <span className="text-slate-700">
+                    Motivo: {MOTIVOS_NO_REALIZADA[a.motivo as MotivoNoRealizada] ?? "Otro"}
+                    {a.nota ? ` · ${a.nota}` : ""}
+                  </span>
+                )}
                 {a.estado !== "PENDIENTE" && (
                   <span className="text-sm text-slate-600">
                     {marcadores.find((m) => m.id === a.id)?.nombre ?? "—"} · {fechaHora(a.marcadaEn)}
@@ -149,6 +244,7 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
                   <form action={accionMarcarActividad} className="flex flex-col gap-2">
                     <input type="hidden" name="cicloId" value={id} />
                     <input type="hidden" name="id" value={a.id} />
+                    <input type="hidden" name="vuelta" value={enlace({})} />
                     {a.estado === "PENDIENTE" ? (
                       <>
                         <button name="estado" value="HECHA" className="h-14 rounded-lg bg-green-700 text-lg font-semibold text-white">
@@ -157,7 +253,14 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
                         <details>
                           <summary className="cursor-pointer py-2 text-marca">No se pudo realizar</summary>
                           <div className="flex flex-col gap-2">
-                            <input name="nota" aria-label={`Motivo de ${a.descripcion}`} placeholder="¿Por qué no se realizó?" className={campo} />
+                            <select name="motivo" aria-label={`Motivo de ${a.codigo ?? a.descripcion}`} defaultValue="EN_PRODUCCION" className={campo}>
+                              {Object.entries(MOTIVOS_NO_REALIZADA).map(([valor, nombre]) => (
+                                <option key={valor} value={valor}>
+                                  {nombre}
+                                </option>
+                              ))}
+                            </select>
+                            <input name="nota" aria-label="Detalle del motivo" placeholder="Detalle (obligatorio si eliges Otro)" className={campo} />
                             <button name="estado" value="NO_REALIZADA" className="h-12 rounded-lg border-2 border-slate-500 text-base font-semibold">
                               Marcar como no realizada
                             </button>
@@ -171,8 +274,6 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
                     )}
                   </form>
                 )}
-              </div>
-            ))}
               </div>
             ))}
           </section>

@@ -1,11 +1,13 @@
 import { Encabezado } from "@/componentes/encabezado";
-import { botonSecundario, tarjeta } from "@/componentes/ui";
+import { botonSecundario, campo, tarjeta } from "@/componentes/ui";
+import { listarActivosVigentes } from "@/lib/consultas";
 import { exigirPerfil } from "@/lib/dal";
-import { accionCargarActivos, accionCargarPautas, accionCargarUsuarios } from "./actions";
+import { accionCargarActivos, accionCargarCartilla, accionCargarUsuarios } from "./actions";
 import { FormularioCarga } from "./formulario";
 
 export default async function CargaInicial() {
   const usuario = await exigirPerfil("ADMINISTRADOR", "JEFE_PLANIFICADOR");
+  const maquinas = await listarActivosVigentes();
   return (
     <>
       <Encabezado usuario={usuario} />
@@ -26,17 +28,31 @@ export default async function CargaInicial() {
             </a>
             <FormularioCarga accion={accionCargarActivos} etiqueta="Planilla de activos (.xlsx)" />
           </section>
-          <section className={`${tarjeta} flex flex-col gap-3`}>
-            <h2 className="text-lg font-bold">Plan de mantenimiento</h2>
+<section className={`${tarjeta} flex flex-col gap-3`}>
+            <h2 className="text-lg font-bold">Cartillas de mantenimiento de una máquina</h2>
             <p className="text-sm text-slate-600">
-              Cada máquina con sus propias cartillas e intervalos. Una fila por actividad: las filas que repiten
-              máquina y cartilla forman una sola cartilla. En «Quién hace la actividad» escribe Operador o una
-              especialidad; vacío significa la especialidad responsable.
+              Una planilla por máquina, una fila por tarea. La columna PAUTA separa las cartillas (A, B, Mensual,
+              Semestral…). Frecuencia y Equivalencia Giros definen cada cuánto se libera cada una y no se muestran a
+              quien la ejecuta. Se acepta la planilla con su título arriba y su pie de firma abajo.
             </p>
-            <a href="/admin/carga/plantilla/pautas" download className={botonSecundario}>
-              Descargar plantilla del plan de mantenimiento
+            <a href="/admin/carga/plantilla/cartilla" download className={botonSecundario}>
+              Descargar plantilla de cartilla
             </a>
-            <FormularioCarga accion={accionCargarPautas} etiqueta="Planilla del plan de mantenimiento (.xlsx)" />
+            <FormularioCarga accion={accionCargarCartilla} etiqueta="Planilla de cartillas (.xlsx)">
+              <label className="flex flex-col gap-1 text-sm font-semibold">
+                Máquina
+                <select name="activoId" required defaultValue="" className={campo}>
+                  <option value="" disabled>
+                    Elegir…
+                  </option>
+                  {maquinas.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.nombre} · {m.codigo}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </FormularioCarga>
           </section>
           {usuario.perfil === "ADMINISTRADOR" && (
             <section className={`${tarjeta} flex flex-col gap-3`}>

@@ -97,13 +97,17 @@ export async function accionMarcarActividad(formData: FormData) {
   const actor = await exigirSesion();
   const cicloId = entero(formData.get("cicloId"));
   const estado = texto(formData.get("estado"));
-  await ejecutar(`/pauta/${cicloId}`, () =>
+  // Vuelve a la misma cartilla conservando los filtros elegidos.
+  const vuelta = texto(formData.get("vuelta"));
+  await ejecutar(vuelta.startsWith(`/pauta/${cicloId}`) ? vuelta : `/pauta/${cicloId}`, () =>
     marcarActividad(
       db,
       actor,
       entero(formData.get("id")),
       estado === "HECHA" || estado === "NO_REALIZADA" ? estado : "PENDIENTE",
       texto(formData.get("nota")),
+      undefined,
+      texto(formData.get("motivo")),
     ),
   );
 }

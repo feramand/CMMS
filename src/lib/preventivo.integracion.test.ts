@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { DB } from "@/db";
 import * as schema from "@/db/schema";
 import type { UsuarioSesion } from "./auth-core";
-import { importarPautas } from "./carga-core";
+import { importarCartilla } from "./cartilla-core";
 import { claveValida, guardarCodigo, recibirDeMetrics } from "./metrics-core";
 import { solicitarRepuesto } from "./ot-core";
 import { parteDelGrupo, type GrupoVista } from "./pautas-calculo";
@@ -302,32 +302,76 @@ describe.skipIf(!url)("preventivo y Metrics (integración)", () => {
       expect((await parte(c.id, { operador: false, especialidadId: espEle })).participa).toBe(false);
     });
 
-    it("cada máquina carga su propio plan desde Excel, con intervalos independientes", async () => {
-      const [planta] = await db.select().from(schema.plantas);
-      await db.insert(schema.activos).values({ codigo: "ENC-001", nombre: "Binder", plantaId: planta.id, girosAcumulados: 12_000, unidadContador: "libros" });
-      const fila = (codigo: string, pauta: string, intervalo: string, grupo: string, actividad: string, extra = {}) =>
-        ({ codigo, pauta, tipo: "Giros", intervalo, especialidad: "Mecánica", grupo, actividad, ...extra });
-      const n = await importarPautas(db, jefe, [
-        fila("IMP-001", "Cartilla 100.000", "100.000", "Operador", "Limpiar sensores"),
-        fila("IMP-001", "Cartilla 100.000", "100.000", "", "Engrasar"),
-        fila("IMP-001", "Cartilla 2.000.000", "2000000", "Eléctrica", "Revisar tablero", { baseGiros: "1.500.000" }),
-        fila("enc-001", "Cartilla 5.000", "5000", "", "Limpiar cola"),
-        { codigo: "ENC-001", pauta: "Revisión mensual", tipo: "tiempo", intervalo: "30", especialidad: "ELE", grupo: "", actividad: "Revisar sensores", baseFecha: "2026-03-01" },
-      ]);
-      expect(n).toBe(4);
+it("carga las cartillas de una máquina desde su planilla, con la ficha completa de cada tarea", async () => {
+      await registrarLecturaManual(db, jefe, maquina, 1_000_000);
+      const fila = (n: number, pauta: string, encargado: string, extra: Record<string, string> = {}) => ({
+        _fila: String(n + 8), codigo: `MPO-${String(n).padStart(3, "0")}`, zona: "Marcador", subsistema: "Cabezal aspirador", componente: `Componente ${n}`,
+        pauta, tipoTarea: "Limpieza", encargado, detencion: "SI", tarea: `Tarea ${n}`, insumos: "Paño", minutos: "20",
+        frecuencia: pauta === "MENSUAL" ? "Bimestral" : "Quincenal", equivalencia: pauta === "MENSUAL" ? "1600000" : "400000", ...extra,
+      });
+      const filas = [
+        fila(1, "A", "Operador"),
+        fila(2, "AB", "Operador/Mecánico", { detencion: "Parcial" }),
+        fila(3, "B", "Eléctrico", { detencion: "NO", minutos: "" }),
+        fila(4, "MENSUAL", "Mecánico", { detencion: "Sí", tarea: "Línea 1\nLínea 2" }),
+        // Pie de la planilla: sin código ni pauta, se ignora aunque tenga texto en otras columnas.
+        { _fila: "90", zona: "Estado de la Orden de Trabajo", tarea: "Totalizador:" },
+      ];
+      const r = await importarCartilla(db, jefe, maquina, filas);
+      expect(r).toEqual({
+        tareas: 4,
+        cartillas: [
+          { nombre: "Pauta A", tareas: 2, intervalo: "400.000 giros" },
+          { nombre: "Pauta B", tareas: 2, intervalo: "400.000 giros" },
+          { nombre: "Pauta MENSUAL", tareas: 1, intervalo: "1.600.000 giros" },
+        ],
+      });
       const cargadas = await db.select().from(schema.pautas).orderBy(schema.pautas.id);
-      expect(cargadas.map((p) => [p.nombre, p.tipo, p.intervalo])).toEqual([
-        ["Cartilla 100.000", "GIROS", 100_000], ["Cartilla 2.000.000", "GIROS", 2_000_000], ["Cartilla 5.000", "GIROS", 5_000], ["Revisión mensual", "TIEMPO", 30],
+      expect(cargadas.map((p) => [p.nombre, p.tipo, p.intervalo, p.frecuencia])).toEqual([
+        ["Pauta A", "GIROS", 400_000, "Quincenal"], ["Pauta B", "GIROS", 400_000, "Quincenal"], ["Pauta MENSUAL", "GIROS", 1_600_000, "Bimestral"],
       ]);
-      expect(await db.select().from(schema.actividadesPauta).where(eq(schema.actividadesPauta.pautaId, cargadas[0].id))).toHaveLength(2);
-      expect(await abierto(cargadas[1].id)).toMatchObject({ baseGiros: 1_500_000, objetivoGiros: 3_500_000 });
-      // La binder parte en su contador actual (12.000 libros) con su propio intervalo.
-      expect(await abierto(cargadas[2].id)).toMatchObject({ baseGiros: 12_000, liberacionGiros: 16_000, objetivoGiros: 17_000 });
-      // Todo o nada: un error en una fila no carga ninguna.
-      await expect(
-        importarPautas(db, jefe, [fila("IMP-001", "Otra", "1000", "", "A"), fila("NO-EXISTE", "X", "10", "", "B"), fila("IMP-001", "Otra 2", "1000", "Pintores", "C"), fila("IMP-001", "Cartilla 100.000", "5", "", "D")]),
-      ).rejects.toThrow("3 errores");
-      expect(await db.select().from(schema.pautas)).toHaveLength(4);
+      // Parten en el contador actual de la máquina.
+      expect(await abierto(cargadas[0].id)).toMatchObject({ estado: "PROGRAMADA", baseGiros: 1_000_000, objetivoGiros: 1_400_000 });
+      const deA = await db.select().from(schema.actividadesPauta).where(eq(schema.actividadesPauta.pautaId, cargadas[0].id)).orderBy(schema.actividadesPauta.orden);
+      expect(deA.map((a) => [a.codigo, a.operador, a.especialidadId, a.detencion, a.minutos])).toEqual([
+        ["MPO-001", true, null, "SI", 20], ["MPO-002", true, espMec, "PARCIAL", 20],
+      ]);
+      expect(deA[0]).toMatchObject({ zona: "Marcador", subsistema: "Cabezal aspirador", componente: "Componente 1", tipoTarea: "Limpieza", insumos: "Paño" });
+      const deB = await db.select().from(schema.actividadesPauta).where(eq(schema.actividadesPauta.pautaId, cargadas[1].id)).orderBy(schema.actividadesPauta.orden);
+      expect(deB.map((a) => [a.codigo, a.especialidadId, a.detencion, a.minutos])).toEqual([["MPO-002", espMec, "PARCIAL", 20], ["MPO-003", espEle, "NO", null]]);
+      // La cartilla también deja la ubicación de cada tarea en el árbol de sistemas de la máquina.
+      const arbol = await db.select().from(schema.sectores).where(eq(schema.sectores.activoId, maquina));
+      expect(arbol.map((n) => n.nombre).sort()).toEqual(["Cabezal aspirador", "Componente 1", "Componente 2", "Componente 3", "Componente 4", "Marcador"]);
+
+      // Al liberarse, la tarea compartida la marca el operador o el mecánico, y el ciclo conserva la ficha.
+      await leer(1_320_000);
+      const c = await abierto(cargadas[0].id);
+      const [soloOperador, compartida] = await lista(c.id);
+      expect(compartida).toMatchObject({ codigo: "MPO-002", zona: "Marcador", detencion: "PARCIAL", minutos: 20, operador: true, especialidadId: espMec });
+      await expect(marcarActividad(db, ele, compartida.id, "HECHA")).rejects.toThrow("la hacen los operadores");
+      await marcarActividad(db, mec, compartida.id, "HECHA");
+      await marcarActividad(db, operador, soloOperador.id, "NO_REALIZADA", undefined, undefined, "EN_PRODUCCION");
+      expect((await lista(c.id))[0]).toMatchObject({ estado: "NO_REALIZADA", motivo: "EN_PRODUCCION", nota: null });
+      await expect(marcarActividad(db, operador, soloOperador.id, "NO_REALIZADA", undefined, undefined, "OTRO")).rejects.toThrow("Explica por qué");
+
+      // Todo o nada, con el número de fila de la planilla en cada error.
+      const mala = [
+        fila(10, "C", "Pintor"),
+        fila(11, "C", "Operador", { detencion: "A veces" }),
+        fila(11, "C", "Operador"),
+        fila(12, "A", "Operador"),
+        fila(13, "D", "Operador", { equivalencia: "", frecuencia: "Cuando se pueda" }),
+      ];
+      const error = await importarCartilla(db, jefe, maquina, mala).catch((e) => e);
+      expect(error.errores).toEqual([
+        'Fila 18: no reconozco el encargado "Pintor". Usa Operador, Mecánico, Eléctrico u otra especialidad.',
+        'Fila 19: la detención debe ser Sí, No o Parcial (dice "A veces").',
+        "Fila 19: el código MPO-011 está repetido.",
+        "Pauta A: esta máquina ya tiene una cartilla con ese nombre.",
+        "Pauta D: indica la equivalencia en giros o una frecuencia conocida (quincenal, mensual, semestral, anual…).",
+      ]);
+      expect(await db.select().from(schema.pautas)).toHaveLength(3);
+      await expect(importarCartilla(db, mec, maquina, filas)).rejects.toThrow("No tienes permiso");
     });
   });
 

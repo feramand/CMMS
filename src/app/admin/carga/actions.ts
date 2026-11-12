@@ -4,13 +4,12 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import {
   COLUMNAS_ACTIVOS,
-  COLUMNAS_PAUTAS,
   COLUMNAS_USUARIOS,
   ErrorDeCarga,
   importarActivos,
-  importarPautas,
   importarUsuarios,
 } from "@/lib/carga-core";
+import { COLUMNAS_CARTILLA, importarCartilla } from "@/lib/cartilla-core";
 import { exigirPerfil } from "@/lib/dal";
 import { leerPlanilla } from "@/lib/excel";
 import { ErrorDeNegocio } from "@/lib/usuarios-core";
@@ -56,13 +55,17 @@ export async function accionCargarUsuarios(_estado: EstadoCarga, formData: FormD
   }
 }
 
-export async function accionCargarPautas(_estado: EstadoCarga, formData: FormData): Promise<EstadoCarga> {
+export async function accionCargarCartilla(_estado: EstadoCarga, formData: FormData): Promise<EstadoCarga> {
   const actor = await exigirPerfil("ADMINISTRADOR", "JEFE_PLANIFICADOR");
   try {
-    const filas = await leerPlanilla(await archivo(formData), COLUMNAS_PAUTAS);
-    const n = await importarPautas(db, actor, filas);
+    const filas = await leerPlanilla(await archivo(formData), COLUMNAS_CARTILLA);
+    const r = await importarCartilla(db, actor, Number(formData.get("activoId")), filas);
     revalidatePath("/", "layout");
-    return { ok: n === 1 ? "Se cargó 1 cartilla." : `Se cargaron ${n} cartillas.` };
+    return {
+      ok: `Se cargaron ${r.cartillas.length} cartillas con ${r.tareas} tareas: ${r.cartillas
+        .map((c) => `${c.nombre} (${c.tareas} tareas, cada ${c.intervalo})`)
+        .join("; ")}.`,
+    };
   } catch (e) {
     return respuesta(e);
   }

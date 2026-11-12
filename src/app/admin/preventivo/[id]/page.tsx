@@ -110,9 +110,16 @@ export default async function DetallePauta({ params, searchParams }: Props) {
             {actividades.map((a, i) => (
               <li key={a.id} className="flex items-center justify-between gap-2 border-t border-slate-200 pt-1">
                 <span>
-                  {i + 1}. {a.descripcion}{" "}
+                  {i + 1}. {a.codigo ? `${a.codigo} · ` : ""}
+                  <span className="whitespace-pre-line">{a.descripcion}</span>{" "}
                   <span className="text-sm text-slate-600">
-                    · {a.operador ? "Operador" : (listaEsp.find((e) => e.id === (a.especialidadId ?? p.especialidadId))?.nombre ?? p.especialidad)}
+                    ·{" "}
+                    {a.operador
+                      ? `Operador${a.especialidadId ? ` / ${listaEsp.find((e) => e.id === a.especialidadId)?.nombre}` : ""}`
+                      : (listaEsp.find((e) => e.id === (a.especialidadId ?? p.especialidadId))?.nombre ?? p.especialidad)}
+                    {[a.zona, a.subsistema, a.componente].filter(Boolean).length > 0 ? ` · ${[a.zona, a.subsistema, a.componente].filter(Boolean).join(" › ")}` : ""}
+                    {a.detencion ? ` · detención: ${a.detencion === "SI" ? "sí" : a.detencion === "NO" ? "no" : "parcial"}` : ""}
+                    {a.minutos !== null ? ` · ${a.minutos} min` : ""}
                   </span>
                 </span>
                 <form action={accionQuitarActividad}>

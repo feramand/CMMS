@@ -63,7 +63,7 @@ type ActividadDeCiclo = { estado: string; operador: boolean; especialidadId: num
  * Una cartilla sin checklist la ejecuta su especialidad responsable.
  */
 export function parteDelGrupo(checklist: ActividadDeCiclo[], grupo: GrupoVista, especialidadResponsable: number) {
-  const esMia = (a: ActividadDeCiclo) => (grupo.operador ? a.operador : !a.operador && a.especialidadId === grupo.especialidadId);
+  const esMia = (a: ActividadDeCiclo) => (grupo.operador ? a.operador : a.especialidadId === grupo.especialidadId);
   const mias = checklist.filter(esMia);
   const sinChecklist = checklist.length === 0 && !grupo.operador && grupo.especialidadId === especialidadResponsable;
   return {

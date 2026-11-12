@@ -57,6 +57,13 @@
       "when": 1794503255971,
       "tag": "0007_cartillas_por_grupo",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794505961334,
+      "tag": "0008_ficha_de_tareas",
+      "breakpoints": true
     }
   ]
 }
