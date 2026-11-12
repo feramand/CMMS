@@ -58,13 +58,13 @@ export class ErrorDeCarga extends ErrorDeNegocio {
 
 class Deshacer extends Error {}
 
-const MAX_FILAS = 2000;
+const MAX_FILAS = 10000;
 
 /**
  * Procesa cada fila dentro de una sola transacción. Los errores se juntan con su número de fila
  * de la planilla (la fila 1 es el encabezado) y, si hay alguno, se deshace todo.
  */
-async function cargar(
+export async function cargar(
   db: DB,
   filas: Fila[],
   columnas: Columna[],

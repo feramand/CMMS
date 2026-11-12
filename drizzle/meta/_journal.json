@@ -71,6 +71,20 @@
       "when": 1794506441386,
       "tag": "0009_downtime_y_rama_de_cartillas",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794517114418,
+      "tag": "0010_bodega",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794522311081,
+      "tag": "0011_marca_repuesto",
+      "breakpoints": true
     }
   ]
 }

@@ -2,12 +2,14 @@ import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { accionSolicitarRepuesto } from "@/app/trabajos/actions";
+import { SugerenciasRepuestos } from "@/componentes/bodega";
 import { Encabezado } from "@/componentes/encabezado";
 import { CampoFotos } from "@/componentes/fotos";
 import { AvisoError, campo, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
 import { activos, ciclosPauta, ordenesTrabajo, pautas, solicitudes } from "@/db/schema";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
+import { listarExistencias } from "@/lib/consultas-bodega";
 import { exigirPerfil } from "@/lib/dal";
 
 type Props = { searchParams: Promise<{ sat?: string; ot?: string; pauta?: string; error?: string }> };
@@ -29,6 +31,7 @@ export default async function SolicitarRepuesto({ searchParams }: Props) {
         .where(eq(ciclosPauta.id, cicloId))
     : [];
   if (!orden && !solicitud && !ciclo) notFound();
+  const catalogo = await listarExistencias();
   const vuelta = orden ? `/ot/${orden.id}` : solicitud ? `/sat/${solicitud.id}` : `/pauta/${ciclo.id}`;
   return (
     <>
@@ -60,9 +63,20 @@ export default async function SolicitarRepuesto({ searchParams }: Props) {
             <input type="hidden" name="cicloId" value={ciclo.id} />
           )}
           <label className="flex flex-col gap-1 text-base font-semibold">
-            Descripción
-            <input name="descripcion" required className={`${campo} h-14 text-lg`} />
+            Repuesto
+            <input
+              name="descripcion"
+              required
+              list="catalogo"
+              autoComplete="off"
+              placeholder="Escribe el código o la descripción"
+              className={`${campo} h-14 text-lg`}
+            />
           </label>
+          <SugerenciasRepuestos id="catalogo" repuestos={catalogo} />
+          <p className="-mt-2 text-sm text-slate-600">
+            Al escribir aparecen los repuestos de bodega con sus existencias. Si no está en la lista, descríbelo con tus palabras.
+          </p>
           <label className="flex flex-col gap-1 text-base font-semibold">
             Código de fabricante (si lo conoces)
             <input name="codigoFabricante" autoCapitalize="characters" className={`${campo} h-14 text-lg`} />

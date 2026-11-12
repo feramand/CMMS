@@ -1,12 +1,16 @@
+import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   bigint,
   boolean,
+  check,
   date,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   serial,
   text,
   time,
@@ -317,6 +321,9 @@ export const solicitudesRepuesto = pgTable("solicitudes_repuesto", {
   cantidad: integer("cantidad").notNull(),
   codigoFabricante: text("codigo_fabricante"),
   descripcion: text("descripcion").notNull(),
+  // Repuesto del catálogo, si el técnico lo eligió de las sugerencias o el bodeguero lo identificó al entregar.
+  repuestoId: integer("repuesto_id").references((): AnyPgColumn => repuestos.id),
+  motivoRechazo: text("motivo_rechazo"),
   estado: estadoRepuestoEnum("estado").notNull().default("PENDIENTE"),
   creadaEn: timestamp("creada_en", { withTimezone: true }).notNull().defaultNow(),
   resueltaEn: timestamp("resuelta_en", { withTimezone: true }),
@@ -527,3 +534,124 @@ export const eventosIntegracion = pgTable("eventos_integracion", {
 export type TipoPauta = (typeof tipoPautaEnum.enumValues)[number];
 export type EstadoCiclo = (typeof estadoCicloEnum.enumValues)[number];
 export type EstadoActividad = (typeof estadoActividadEnum.enumValues)[number];
+
+// ---------- Bodega ----------
+// Módulo con límites propios: las existencias solo cambian a través de un movimiento.
+
+const cantidad = (nombre: string) => numeric(nombre, { precision: 14, scale: 2, mode: "number" });
+
+export const repuestos = pgTable("repuestos", {
+  id: serial("id").primaryKey(),
+  codigo: text("codigo").notNull().unique(),
+  codigoFabricante: text("codigo_fabricante"),
+  marca: text("marca"),
+  descripcion: text("descripcion").notNull(),
+  unidad: text("unidad").notNull().default("unidad"),
+  familia: text("familia"),
+  stockMinimo: cantidad("stock_minimo").notNull().default(0),
+  stockMaximo: cantidad("stock_maximo"),
+  // Costo unitario por precio medio ponderado, en pesos. Lo actualizan las entradas.
+  costoMedio: cantidad("costo_medio").notNull().default(0),
+  activo: boolean("activo").notNull().default(true),
+  creadoEn: timestamp("creado_en", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Máquinas en las que se usa un repuesto.
+export const repuestosActivo = pgTable(
+  "repuestos_activo",
+  {
+    repuestoId: integer("repuesto_id")
+      .notNull()
+      .references(() => repuestos.id, { onDelete: "cascade" }),
+    activoId: integer("activo_id")
+      .notNull()
+      .references(() => activos.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.repuestoId, t.activoId] })],
+);
+
+export const almacenes = pgTable("almacenes", {
+  id: serial("id").primaryKey(),
+  nombre: text("nombre").notNull().unique(),
+  activo: boolean("activo").notNull().default(true),
+});
+
+export const existencias = pgTable(
+  "existencias",
+  {
+    repuestoId: integer("repuesto_id")
+      .notNull()
+      .references(() => repuestos.id),
+    almacenId: integer("almacen_id")
+      .notNull()
+      .references(() => almacenes.id),
+    cantidad: cantidad("cantidad").notNull().default(0),
+    // Estante, casillero o cajón dentro del almacén.
+    ubicacion: text("ubicacion"),
+  },
+  (t) => [primaryKey({ columns: [t.repuestoId, t.almacenId] }), check("existencia_no_negativa", sql`${t.cantidad} >= 0`)],
+);
+
+export const tipoMovimientoEnum = pgEnum("tipo_movimiento", ["ENTRADA", "SALIDA", "TRASLADO", "AJUSTE", "DEVOLUCION"]);
+export type TipoMovimiento = (typeof tipoMovimientoEnum.enumValues)[number];
+
+export const movimientos = pgTable("movimientos", {
+  id: serial("id").primaryKey(),
+  tipo: tipoMovimientoEnum("tipo").notNull(),
+  repuestoId: integer("repuesto_id")
+    .notNull()
+    .references(() => repuestos.id),
+  almacenId: integer("almacen_id")
+    .notNull()
+    .references(() => almacenes.id),
+  // Solo en traslados.
+  almacenDestinoId: integer("almacen_destino_id").references(() => almacenes.id),
+  // Variación en el almacén: positiva si entra, negativa si sale. En un traslado es la cantidad trasladada.
+  cantidad: cantidad("cantidad").notNull(),
+  costoUnitario: cantidad("costo_unitario").notNull().default(0),
+  usuarioId: integer("usuario_id")
+    .notNull()
+    .references(() => usuarios.id),
+  fecha: timestamp("fecha", { withTimezone: true }).notNull().defaultNow(),
+  activoId: integer("activo_id").references(() => activos.id),
+  otId: integer("ot_id").references(() => ordenesTrabajo.id),
+  solicitudRepuestoId: integer("solicitud_repuesto_id").references(() => solicitudesRepuesto.id),
+  tomaId: integer("toma_id").references((): AnyPgColumn => tomasInventario.id),
+  // A quién se entregó, cuando no es contra una solicitud.
+  recibeId: integer("recibe_id").references(() => usuarios.id),
+  documento: text("documento"),
+  nota: text("nota"),
+});
+
+export const estadoTomaEnum = pgEnum("estado_toma", ["ABIERTA", "CERRADA", "ANULADA"]);
+
+export const tomasInventario = pgTable("tomas_inventario", {
+  id: serial("id").primaryKey(),
+  almacenId: integer("almacen_id")
+    .notNull()
+    .references(() => almacenes.id),
+  estado: estadoTomaEnum("estado").notNull().default("ABIERTA"),
+  creadaPor: integer("creada_por")
+    .notNull()
+    .references(() => usuarios.id),
+  creadaEn: timestamp("creada_en", { withTimezone: true }).notNull().defaultNow(),
+  cerradaPor: integer("cerrada_por").references(() => usuarios.id),
+  cerradaEn: timestamp("cerrada_en", { withTimezone: true }),
+});
+
+export const lineasToma = pgTable(
+  "lineas_toma",
+  {
+    tomaId: integer("toma_id")
+      .notNull()
+      .references(() => tomasInventario.id, { onDelete: "cascade" }),
+    repuestoId: integer("repuesto_id")
+      .notNull()
+      .references(() => repuestos.id),
+    // Lo que decía el sistema al abrir la toma.
+    sistema: cantidad("sistema").notNull(),
+    // Lo contado; vacío mientras no se cuente.
+    contada: cantidad("contada"),
+  },
+  (t) => [primaryKey({ columns: [t.tomaId, t.repuestoId] })],
+);

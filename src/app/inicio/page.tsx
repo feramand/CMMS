@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import Link from "next/link";
-import { accionResolverRepuesto, accionTomar } from "@/app/trabajos/actions";
+import { accionTomar } from "@/app/trabajos/actions";
 import { ActivarAvisos } from "@/componentes/activar-avisos";
 import { Encabezado } from "@/componentes/encabezado";
 import { Fotos } from "@/componentes/fotos";
@@ -286,6 +286,9 @@ async function InicioBodeguero() {
     : [];
   return (
     <section className="flex flex-col gap-2">
+      <Link href="/bodega" className="flex h-16 items-center justify-center rounded-xl bg-marca text-xl font-bold text-white">
+        Bodega: existencias y movimientos
+      </Link>
       <h2 className={titulo}>Solicitudes de repuesto · {pendientes.length}</h2>
       {pendientes.length === 0 && <p className="text-slate-600">No hay solicitudes pendientes.</p>}
       {pendientes.map((r) => (
@@ -302,15 +305,9 @@ async function InicioBodeguero() {
             Pidió {r.solicitante} · {fechaHora(r.creadaEn)}
           </span>
           <Fotos ids={fotos.filter((f) => f.repuestoId === r.id).map((f) => f.id)} titulo="Fotos de referencia" />
-          <form action={accionResolverRepuesto} className="grid grid-cols-2 gap-2">
-            <input type="hidden" name="id" value={r.id} />
-            <button name="estado" value="ENTREGADA" className="h-12 rounded-lg bg-green-700 text-base font-semibold text-white">
-              Entregado
-            </button>
-            <button name="estado" value="RECHAZADA" className="h-12 rounded-lg border-2 border-slate-500 text-base font-semibold">
-              Rechazar
-            </button>
-          </form>
+          <Link href={`/bodega/solicitud/${r.id}`} className="flex h-14 items-center justify-center rounded-lg bg-marca text-lg font-semibold text-white">
+            Atender
+          </Link>
         </div>
       ))}
     </section>
