@@ -1,6 +1,8 @@
 "use server";
 
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
+import { repuestos } from "@/db/schema";
 import {
   categoriaEnum,
   estadoOtEnum,
@@ -19,10 +21,8 @@ import {
   cambiarEstadoOt,
   crearOt,
   guardarCausaRaiz,
-  resolverRepuesto,
   solicitarRepuesto,
 } from "@/lib/ot-core";
-import { puedeEntrarAdmin } from "@/lib/perfiles";
 import {
   asignarSolicitud,
   cerrarSolicitud,
@@ -170,27 +170,22 @@ export async function accionSolicitarRepuesto(formData: FormData) {
   const vuelta = otId ? `/ot/${otId}` : solicitudId ? `/sat/${solicitudId}` : `/pauta/${cicloId}`;
   await ejecutar(`/repuesto?${otId ? `ot=${otId}` : solicitudId ? `sat=${solicitudId}` : `pauta=${cicloId}`}`, async () => {
     const fotos = await fotosDeFormulario(formData);
+    // Si se eligió una sugerencia ("CÓDIGO — descripción"), la solicitud queda ligada al catálogo.
+    const escrito = texto(formData.get("descripcion"));
+    const [codigo, ...resto] = escrito.split(" — ");
+    const [catalogo] = resto.length
+      ? await db.select().from(repuestos).where(eq(repuestos.codigo, codigo.trim().toUpperCase()))
+      : [];
     const repuestoId = await solicitarRepuesto(db, actor, {
       solicitudId,
       otId,
       cicloId,
       cantidad: Number(formData.get("cantidad")),
-      codigoFabricante: texto(formData.get("codigoFabricante")),
-      descripcion: texto(formData.get("descripcion")),
+      codigoFabricante: texto(formData.get("codigoFabricante")) || catalogo?.codigoFabricante,
+      descripcion: catalogo ? `${catalogo.codigo} — ${catalogo.descripcion}` : escrito,
+      repuestoId: catalogo?.id,
     });
     await guardarFotos(db, actor, { repuestoId }, fotos);
     return `${vuelta}?aviso=repuesto`;
-  });
-}
-
-export async function accionResolverRepuesto(formData: FormData) {
-  const actor = await exigirSesion();
-  await ejecutar(puedeEntrarAdmin(actor.perfil) ? "/admin" : "/inicio", async () => {
-    await resolverRepuesto(
-      db,
-      actor,
-      entero(formData.get("id")),
-      formData.get("estado") === "RECHAZADA" ? "RECHAZADA" : "ENTREGADA",
-    );
   });
 }

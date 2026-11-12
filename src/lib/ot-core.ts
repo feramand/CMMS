@@ -256,6 +256,8 @@ export type DatosRepuesto = {
   cantidad: number;
   codigoFabricante?: string | null;
   descripcion: string;
+  /** Repuesto del catálogo, si se eligió de las sugerencias. */
+  repuestoId?: number | null;
 };
 
 /** Solicitud de repuesto desde una SAT, una OT o una pauta. La máquina se hereda del trabajo. */
@@ -306,6 +308,7 @@ export async function solicitarRepuesto(
         cantidad: datos.cantidad,
         codigoFabricante: datos.codigoFabricante?.trim() || null,
         descripcion,
+        repuestoId: datos.repuestoId ?? null,
       })
       .returning({ id: solicitudesRepuesto.id });
     await notificar(

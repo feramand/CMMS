@@ -11,6 +11,7 @@ const MENU_ADMIN = [
   { href: "/admin/ot", nombre: "Órdenes de trabajo" },
   { href: "/admin/preventivo", nombre: "Preventivo" },
   { href: "/admin/indicadores", nombre: "Indicadores" },
+  { href: "/bodega", nombre: "Bodega" },
   { href: "/admin/activos", nombre: "Activos" },
   { href: "/admin/tipos", nombre: "Tipos de máquina" },
   { href: "/admin/usuarios", nombre: "Usuarios" },
@@ -21,7 +22,17 @@ const MENU_ADMIN = [
 
 export async function Encabezado({ usuario }: { usuario: UsuarioSesion }) {
   const sinLeer = await notificacionesSinLeer(usuario.id);
-  const menu = usuario.perfil === "ADMINISTRADOR" || usuario.perfil === "JEFE_PLANIFICADOR";
+  const menu =
+    usuario.perfil === "ADMINISTRADOR" || usuario.perfil === "JEFE_PLANIFICADOR"
+      ? MENU_ADMIN
+      : usuario.perfil === "ABASTECIMIENTO"
+        ? MENU_ADMIN.filter((m) => m.href === "/admin" || m.href === "/bodega")
+        : usuario.perfil === "BODEGUERO"
+          ? [
+              { href: "/inicio", nombre: "Inicio" },
+              { href: "/bodega", nombre: "Bodega" },
+            ]
+          : null;
   return (
     <header className="bg-marca text-white">
       <div className="flex items-center justify-between gap-3 px-4 py-3">
@@ -51,7 +62,7 @@ export async function Encabezado({ usuario }: { usuario: UsuarioSesion }) {
       </div>
       {menu && (
         <nav className="flex flex-wrap gap-1 px-3 pb-2">
-          {MENU_ADMIN.map((m) => (
+          {menu.map((m) => (
             <Link key={m.href} href={m.href} className="rounded-lg px-3 py-2 text-base text-blue-50 hover:bg-marca-oscura">
               {m.nombre}
             </Link>

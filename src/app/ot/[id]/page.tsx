@@ -9,7 +9,9 @@ import { AvisoError, botonPrimario, botonSecundario, campo, ChipOt, Dato, tarjet
 import { db } from "@/db";
 import { adjuntos, apoyos, ordenesTrabajo, solicitudes, solicitudesRepuesto, usuarios } from "@/db/schema";
 import { listarOts, listarTecnicos } from "@/lib/consultas";
+import { consumoDeOt } from "@/lib/consultas-bodega";
 import { exigirSesion } from "@/lib/dal";
+import { cant, pesos } from "@/lib/formato";
 import { estadosSiguientes, nombreEstadoOt } from "@/lib/ot-core";
 import { rutaInicio } from "@/lib/perfiles";
 import { duracion, fechaHora, minutosEntre } from "@/lib/tiempo";
@@ -42,7 +44,7 @@ export default async function FichaOt({ params, searchParams }: Props) {
   const admin = usuario.perfil !== "TECNICO";
   const puedeOperar = admin || ot.responsableId === usuario.id;
   const abierta = ot.estado !== "FINALIZADA" && ot.estado !== "CANCELADA";
-  const [repuestos, listaApoyos, [origen], tecnicos] = await Promise.all([
+  const [repuestos, listaApoyos, [origen], tecnicos, consumo] = await Promise.all([
     db.select().from(solicitudesRepuesto).where(eq(solicitudesRepuesto.otId, id)),
     db
       .select({ nombre: usuarios.nombre })
@@ -51,6 +53,7 @@ export default async function FichaOt({ params, searchParams }: Props) {
       .where(eq(apoyos.otId, id)),
     db.select({ id: solicitudes.id }).from(solicitudes).where(eq(solicitudes.otId, id)).limit(1),
     abierta && puedeOperar ? listarTecnicos() : [],
+    consumoDeOt(id),
   ]);
   const fotos = repuestos.length
     ? await db
@@ -223,6 +226,25 @@ export default async function FichaOt({ params, searchParams }: Props) {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          {consumo.length > 0 && (
+            <div className="flex flex-col gap-1 border-t border-slate-200 pt-3">
+              <h3 className="font-bold">Entregado por bodega</h3>
+              {consumo.map((c) => (
+                <span key={c.repuestoId} className="flex flex-wrap justify-between gap-2">
+                  <span>
+                    {cant(c.cantidad)} {c.unidad} · {c.codigo} {c.descripcion}
+                  </span>
+                  {admin && <span className="tabular-nums">{pesos(c.costo)}</span>}
+                </span>
+              ))}
+              {admin && (
+                <span className="flex justify-between border-t border-slate-200 pt-1 font-bold">
+                  Costo de repuestos
+                  <span className="tabular-nums">{pesos(consumo.reduce((s, c) => s + c.costo, 0))}</span>
+                </span>
+              )}
             </div>
           )}
         </section>

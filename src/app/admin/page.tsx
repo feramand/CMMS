@@ -6,13 +6,15 @@ const DISPONIBLES = [
   { href: "/admin/tablero", nombre: "Tablero" },
   { href: "/admin/solicitudes", nombre: "Solicitudes" },
   { href: "/admin/ot", nombre: "Órdenes de trabajo" },
+  { href: "/admin/preventivo", nombre: "Preventivo" },
+  { href: "/admin/indicadores", nombre: "Indicadores" },
   { href: "/admin/activos", nombre: "Activos" },
   { href: "/admin/usuarios", nombre: "Usuarios" },
   { href: "/admin/carga", nombre: "Carga inicial" },
   { href: "/admin/configuracion", nombre: "Configuración" },
 ];
 
-const MODULOS = ["Planificación preventiva", "Bodega", "Compras", "KPI y reportes"];
+const MODULOS = ["Compras", "KPI y reportes"];
 
 export default async function PanelAdmin() {
   const usuario = await exigirPerfil("ADMINISTRADOR", "JEFE_PLANIFICADOR", "ABASTECIMIENTO");
@@ -33,6 +35,9 @@ export default async function PanelAdmin() {
                 {d.nombre}
               </Link>
             ))}
+          <Link href="/bodega" className="flex h-20 items-center rounded-xl bg-white px-4 text-lg font-semibold text-marca shadow-sm">
+            Bodega
+          </Link>
           {MODULOS.map((m) => (
             <div
               key={m}
