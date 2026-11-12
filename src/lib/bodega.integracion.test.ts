@@ -251,7 +251,7 @@ describe.skipIf(!url)("bodega (integración)", () => {
     const filas: Record<string, string>[] = [
       { codigo: "rod-6204", descripcion: "Rodamiento 6204", stockMinimo: "4", costo: "3500", almacen: "bodega central", existencia: "10", ubicacion: "A-3" },
       { codigo: "ROD-6204", descripcion: "Rodamiento 6204", stockMinimo: "4", costo: "3500", almacen: "Pañol mecánico", existencia: "2" },
-      { codigo: "ACE-68", descripcion: "Aceite hidráulico 68", unidad: "Litro", costo: "2.100,5", almacen: "Bodega central", existencia: "37,5" },
+      { codigo: "ACE-68", descripcion: "Aceite hidráulico 68", marca: " Shell ", unidad: "Litro", costo: "2.100,5", almacen: "Bodega central", existencia: "37,5" },
       { codigo: "FUS-10", descripcion: "Fusible 10 A" },
     ];
     expect(await importarRepuestos(db, bodeguero, filas)).toBe(4);
@@ -261,6 +261,7 @@ describe.skipIf(!url)("bodega (integración)", () => {
       ["FUS-10", "unidad", 0],
       ["ROD-6204", "unidad", 3500],
     ]);
+    expect(cat.map((r) => r.marca)).toEqual(["Shell", null, null]);
     const rod = cat[2].id;
     expect([await stock(rod, central), await stock(rod, panol), await stock(cat[0].id, central)]).toEqual([10, 2, 37.5]);
     expect((await db.select().from(schema.existencias)).find((e) => e.repuestoId === rod && e.almacenId === central)?.ubicacion).toBe("A-3");

@@ -33,6 +33,7 @@ export function SugerenciasRepuestos({ id, repuestos }: { id: string; repuestos:
       {repuestos.map((r) => (
         <option key={r.id} value={`${r.codigo} — ${r.descripcion}`}>
           {r.total > 0 ? `Hay ${cant(r.total)} ${r.unidad}` : "Sin existencias"}
+          {r.marca ? ` · ${r.marca}` : ""}
           {r.codigoFabricante ? ` · ${r.codigoFabricante}` : ""}
         </option>
       ))}

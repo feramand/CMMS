@@ -23,8 +23,12 @@ export function FormularioRepuesto({
         <input name="codigo" required defaultValue={r?.codigo} autoCapitalize="characters" className={campo} />
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold">
-        Código de fabricante
+        Código de parte del fabricante (opcional)
         <input name="codigoFabricante" defaultValue={r?.codigoFabricante ?? ""} className={campo} />
+      </label>
+      <label className="flex flex-col gap-1 text-sm font-semibold sm:col-span-2">
+        Marca (opcional)
+        <input name="marca" defaultValue={r?.marca ?? ""} className={campo} />
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold sm:col-span-2">
         Descripción

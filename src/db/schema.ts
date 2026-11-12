@@ -544,6 +544,7 @@ export const repuestos = pgTable("repuestos", {
   id: serial("id").primaryKey(),
   codigo: text("codigo").notNull().unique(),
   codigoFabricante: text("codigo_fabricante"),
+  marca: text("marca"),
   descripcion: text("descripcion").notNull(),
   unidad: text("unidad").notNull().default("unidad"),
   familia: text("familia"),

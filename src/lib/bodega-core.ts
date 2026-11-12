@@ -81,6 +81,7 @@ function cantidadValida(n: number, que = "La cantidad"): number {
 export type DatosRepuesto = {
   codigo: string;
   codigoFabricante?: string | null;
+  marca?: string | null;
   descripcion: string;
   unidad?: string | null;
   familia?: string | null;
@@ -110,6 +111,7 @@ function limpiarRepuesto(d: DatosRepuesto) {
     codigo,
     descripcion,
     codigoFabricante: d.codigoFabricante?.trim() || null,
+    marca: d.marca?.trim() || null,
     unidad: d.unidad?.trim().toLowerCase() || "unidad",
     familia: d.familia?.trim() || null,
     stockMinimo: r2(stockMinimo),
@@ -588,7 +590,8 @@ export async function anularToma(db: DB, actor: UsuarioSesion, tomaId: number): 
 export const COLUMNAS_REPUESTOS: Columna[] = [
   { clave: "codigo", titulo: "Código interno", obligatoria: true, ejemplo: "ROD-6204" },
   { clave: "descripcion", titulo: "Descripción", obligatoria: true, ejemplo: "Rodamiento 6204 2RS" },
-  { clave: "codigoFabricante", titulo: "Código de fabricante", ejemplo: "SKF 6204-2RSH" },
+  { clave: "codigoFabricante", titulo: "Código de fabricante", ejemplo: "6204-2RSH" },
+  { clave: "marca", titulo: "Marca", ejemplo: "SKF" },
   { clave: "unidad", titulo: "Unidad", ejemplo: "unidad" },
   { clave: "familia", titulo: "Familia", ejemplo: "Rodamientos" },
   { clave: "stockMinimo", titulo: "Stock mínimo", ejemplo: "4" },
@@ -618,6 +621,7 @@ export async function importarRepuestos(db: DB, actor: UsuarioSesion, filas: Fil
       codigo: f.codigo,
       descripcion: f.descripcion,
       codigoFabricante: f.codigoFabricante,
+      marca: f.marca,
       unidad: f.unidad,
       familia: f.familia,
       stockMinimo: num("stockMinimo", "Stock mínimo"),

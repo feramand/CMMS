@@ -106,7 +106,8 @@ export default async function FichaRepuesto({ params, searchParams }: Props) {
         <section className={`${tarjeta} flex flex-col gap-4`}>
           <p className="text-xl font-semibold">{r.descripcion}</p>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Dato etiqueta="Código de fabricante">{r.codigoFabricante ?? "—"}</Dato>
+            <Dato etiqueta="Código de parte del fabricante">{r.codigoFabricante ?? "—"}</Dato>
+            <Dato etiqueta="Marca">{r.marca ?? "—"}</Dato>
             <Dato etiqueta="Familia">{r.familia ?? "—"}</Dato>
             <Dato etiqueta="Total en existencia">
               {cant(r.total)} {r.unidad}

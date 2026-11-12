@@ -21,6 +21,7 @@ export type FilaExistencia = {
   id: number;
   codigo: string;
   codigoFabricante: string | null;
+  marca: string | null;
   descripcion: string;
   unidad: string;
   familia: string | null;
@@ -40,7 +41,7 @@ export async function listarExistencias(opciones: { texto?: string; ids?: number
   const t = opciones.texto?.trim();
   if (t) {
     const patron = `%${t.replace(/[%_\\]/g, "\\$&")}%`;
-    filtros.push(or(ilike(repuestos.codigo, patron), ilike(repuestos.codigoFabricante, patron), ilike(repuestos.descripcion, patron), ilike(repuestos.familia, patron)));
+    filtros.push(or(ilike(repuestos.codigo, patron), ilike(repuestos.codigoFabricante, patron), ilike(repuestos.marca, patron), ilike(repuestos.descripcion, patron), ilike(repuestos.familia, patron)));
   }
   const lista = await db.select().from(repuestos).where(and(...filtros)).orderBy(asc(repuestos.codigo));
   if (lista.length === 0) return [];

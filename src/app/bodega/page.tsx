@@ -40,7 +40,7 @@ export default async function Existencias({ searchParams }: Props) {
         <MenuBodega actual="/bodega" opera={operaBodega(usuario)} />
         <form className={`${tarjeta} grid items-end gap-3 sm:grid-cols-[1fr_auto_auto_auto]`}>
           <label className="flex flex-col gap-1 text-sm font-semibold">
-            Buscar por código, descripción, código de fabricante o familia
+            Buscar por código interno, código de fabricante, marca, descripción o familia
             <input name="q" defaultValue={q ?? ""} className={campo} />
           </label>
           <label className="flex flex-col gap-1 text-sm font-semibold">
@@ -85,7 +85,9 @@ export default async function Existencias({ searchParams }: Props) {
           <table className="w-full text-left text-base">
             <thead className="bg-slate-100 text-sm text-slate-700">
               <tr>
-                <th className="px-3 py-2">Código</th>
+                <th className="px-3 py-2">Código interno</th>
+                <th className="px-3 py-2">Código fabricante</th>
+                <th className="px-3 py-2">Marca</th>
                 <th className="px-3 py-2">Descripción</th>
                 {visibles.map((a) => (
                   <th key={a.id} className="px-3 py-2 text-right">
@@ -106,6 +108,8 @@ export default async function Existencias({ searchParams }: Props) {
                       {r.codigo}
                     </Link>
                   </td>
+                  <td className="px-3 py-2">{r.codigoFabricante ?? "—"}</td>
+                  <td className="px-3 py-2">{r.marca ?? "—"}</td>
                   <td className="px-3 py-2">
                     {r.descripcion}
                     {r.familia && <span className="text-sm text-slate-500"> · {r.familia}</span>}
@@ -133,7 +137,7 @@ export default async function Existencias({ searchParams }: Props) {
               ))}
               {filas.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-6 text-center text-slate-600">
+                  <td colSpan={10} className="px-3 py-6 text-center text-slate-600">
                     {todos.length === 0 && !q ? "El catálogo está vacío. Crea un repuesto o carga la planilla." : "Ningún repuesto coincide con el filtro."}
                   </td>
                 </tr>
