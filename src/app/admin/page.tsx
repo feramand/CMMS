@@ -7,14 +7,15 @@ const DISPONIBLES = [
   { href: "/admin/solicitudes", nombre: "Solicitudes" },
   { href: "/admin/ot", nombre: "Órdenes de trabajo" },
   { href: "/admin/preventivo", nombre: "Preventivo" },
-  { href: "/admin/indicadores", nombre: "Indicadores" },
+  { href: "/admin/indicadores", nombre: "Indicadores y reportes" },
+  { href: "/soluciones", nombre: "Base de soluciones" },
   { href: "/admin/activos", nombre: "Activos" },
   { href: "/admin/usuarios", nombre: "Usuarios" },
   { href: "/admin/carga", nombre: "Carga inicial" },
   { href: "/admin/configuracion", nombre: "Configuración" },
 ];
 
-const MODULOS = ["KPI y reportes"];
+const MODULOS = ["Modo sin conexión"];
 
 export default async function PanelAdmin() {
   const usuario = await exigirPerfil("ADMINISTRADOR", "JEFE_PLANIFICADOR", "ABASTECIMIENTO");

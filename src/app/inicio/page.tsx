@@ -330,6 +330,11 @@ export default async function InicioOperativo({ searchParams }: Props) {
           </Link>
         )}
         {usuario.perfil === "TECNICO" && <InicioTecnico usuario={usuario} />}
+        {usuario.perfil === "TECNICO" && (
+          <Link href="/soluciones" className="flex h-12 items-center justify-center rounded-lg border-2 border-marca bg-white text-base font-semibold text-marca">
+            Base de soluciones
+          </Link>
+        )}
         {usuario.perfil === "OPERADOR" && <InicioOperador usuario={usuario} />}
         {usuario.perfil === "BODEGUERO" && <InicioBodeguero />}
       </main>

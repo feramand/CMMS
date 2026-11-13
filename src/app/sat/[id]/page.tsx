@@ -123,6 +123,11 @@ export default async function DetalleSolicitud({ params, searchParams }: Props) 
             <p className="text-slate-600">Con apoyo de {listaApoyos.map((a) => a.nombre).join(", ")}</p>
           )}
           <Fotos ids={fotos.filter((f) => f.repuestoId === null).map((f) => f.id)} />
+          {usuario.perfil !== "OPERADOR" && (
+            <Link href={`/soluciones?activoId=${s.activoId}`} className="text-marca underline">
+              Ver soluciones anteriores en esta máquina
+            </Link>
+          )}
           {s.otId && (
             <Link href={`/ot/${s.otId}`} className="font-semibold text-marca underline">
               Ver orden de trabajo {s.folioOt}
