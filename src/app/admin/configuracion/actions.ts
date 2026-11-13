@@ -2,6 +2,7 @@
 
 import { db } from "@/db";
 import { ejecutar, entero, texto } from "@/lib/accion";
+import { fijarProximoFolioOc } from "@/lib/compras-core";
 import { exigirSesion } from "@/lib/dal";
 import { agregarFeriado, guardarHorario, quitarFeriado } from "@/lib/horarios-core";
 
@@ -27,5 +28,13 @@ export async function accionQuitarFeriado(formData: FormData) {
   const actor = await exigirSesion();
   await ejecutar("/admin/configuracion", async () => {
     await quitarFeriado(db, actor, texto(formData.get("fecha")));
+  });
+}
+
+export async function accionFijarFolioOc(formData: FormData) {
+  const actor = await exigirSesion();
+  await ejecutar("/admin/configuracion", async () => {
+    const limpio = texto(formData.get("folio")).trim().replace(/\./g, "");
+    await fijarProximoFolioOc(db, actor, /^\d+$/.test(limpio) ? Number(limpio) : NaN);
   });
 }

@@ -127,14 +127,39 @@ async function procesarDetencion(db: DB, cuerpo: Record<string, unknown>): Promi
   }
 }
 
+/**
+ * Fin de detención: { idApuntamiento, fechaHora }. La máquina volvió a producir.
+ * Desde esa hora deja de contar el tiempo detenido de la solicitud que generó ese apuntamiento,
+ * aunque la solicitud siga abierta. Los apuntamientos que no generaron solicitud se ignoran.
+ */
+async function procesarFin(db: DB, cuerpo: Record<string, unknown>): Promise<Resultado> {
+  const id = texto(cuerpo.idApuntamiento);
+  if (!id) return { resultado: "ERROR", detalle: "Falta idApuntamiento." };
+  const fin = instante(cuerpo.fechaHora);
+  if (!fin) return { resultado: "ERROR", detalle: "Falta fechaHora o no es una fecha válida (ISO 8601)." };
+  const [directa] = await db.select({ id: solicitudes.id }).from(solicitudes).where(eq(solicitudes.idDetencionMetrics, id));
+  const [porAviso] = directa
+    ? []
+    : await db.select({ id: avisosSolicitud.solicitudId }).from(avisosSolicitud).where(eq(avisosSolicitud.idDetencionMetrics, id));
+  const solicitudId = (directa ?? porAviso)?.id;
+  if (!solicitudId) return { resultado: "IGNORADO", detalle: `El apuntamiento ${id} no generó ninguna solicitud.` };
+  const [s] = await db.select().from(solicitudes).where(eq(solicitudes.id, solicitudId));
+  const desde = s.detenidaEn ?? s.creadaEn;
+  if (fin < desde) return { resultado: "ERROR", detalle: "El fin de la detención es anterior a su inicio." };
+  // Varias detenciones de una misma falla: vale la última vez que la máquina volvió a producir.
+  if (s.reanudadaEn && s.reanudadaEn >= fin) return { resultado: "IGNORADO", detalle: `La solicitud ${solicitudId} ya tiene un fin de detención posterior.` };
+  await db.update(solicitudes).set({ reanudadaEn: fin }).where(eq(solicitudes.id, solicitudId));
+  return { resultado: "PROCESADO", detalle: `Solicitud ${solicitudId}: fin de detención registrado.` };
+}
+
 /** Procesa un mensaje del conector y lo deja registrado tal como llegó, con su resultado. */
-export async function recibirDeMetrics(db: DB, tipo: "GIROS" | "DETENCION", cuerpo: unknown): Promise<Resultado> {
+export async function recibirDeMetrics(db: DB, tipo: "GIROS" | "DETENCION" | "FIN_DETENCION", cuerpo: unknown): Promise<Resultado> {
   let salida: Resultado;
   if (typeof cuerpo !== "object" || cuerpo === null || Array.isArray(cuerpo)) {
     salida = { resultado: "ERROR", detalle: "El cuerpo debe ser un objeto JSON." };
   } else {
     const datos = cuerpo as Record<string, unknown>;
-    salida = tipo === "GIROS" ? await procesarGiros(db, datos) : await procesarDetencion(db, datos);
+    salida = tipo === "GIROS" ? await procesarGiros(db, datos) : tipo === "DETENCION" ? await procesarDetencion(db, datos) : await procesarFin(db, datos);
   }
   await db.insert(eventosIntegracion).values({ tipo, cuerpo: cuerpo ?? null, ...salida });
   return salida;

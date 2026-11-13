@@ -4,9 +4,10 @@ import { AvisoError, botonPrimario, campo, Chip, tarjeta } from "@/componentes/u
 import { db } from "@/db";
 import { feriados, turnos } from "@/db/schema";
 import { listarTecnicos } from "@/lib/consultas";
+import { folioOc, proximoFolioOc } from "@/lib/compras-core";
 import { exigirPerfil } from "@/lib/dal";
 import { diasDe } from "@/lib/disponibilidad";
-import { accionAgregarFeriado, accionGuardarHorario, accionQuitarFeriado } from "./actions";
+import { accionAgregarFeriado, accionFijarFolioOc, accionGuardarHorario, accionQuitarFeriado } from "./actions";
 
 const DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 
@@ -18,6 +19,7 @@ function fechaCorta(iso: string): string {
 export default async function Configuracion({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const usuario = await exigirPerfil("ADMINISTRADOR", "JEFE_PLANIFICADOR");
   const { error } = await searchParams;
+  const proximoOc = await proximoFolioOc(db);
   const [tecnicos, listaFeriados, listaTurnos] = await Promise.all([
     listarTecnicos(),
     db.select().from(feriados).orderBy(asc(feriados.fecha)),
@@ -111,6 +113,29 @@ export default async function Configuracion({ searchParams }: { searchParams: Pr
             ))}
           </ul>
         </section>
+
+        {usuario.perfil === "ADMINISTRADOR" && (
+          <section className={`${tarjeta} flex flex-col gap-3`}>
+            <h2 className="text-lg font-bold">Folio de las órdenes de compra</h2>
+            <p className="text-slate-700">
+              La próxima orden de compra será la <b>{folioOc(proximoOc)}</b>. Para continuar el correlativo que la
+              empresa lleva fuera del sistema, escribe el número que debe tener la próxima orden.
+            </p>
+            <form action={accionFijarFolioOc} className="flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1 text-sm font-semibold">
+                Próximo folio
+                <input name="folio" required inputMode="numeric" defaultValue={proximoOc} className={`${campo} max-w-40`} />
+              </label>
+              <button type="submit" className={botonPrimario}>
+                Guardar folio
+              </button>
+            </form>
+            <p className="text-sm text-slate-600">
+              Solo se puede avanzar, nunca retroceder, para no repetir folios. Si una orden falla al emitirse, su
+              número se salta y no se reutiliza.
+            </p>
+          </section>
+        )}
 
         <section className={`${tarjeta} flex flex-col gap-2`}>
           <h2 className="text-lg font-bold">Turnos rotativos</h2>

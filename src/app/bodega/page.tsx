@@ -31,11 +31,16 @@ export default async function Existencias({ searchParams }: Props) {
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold">Bodega</h1>
-          {(operaBodega(usuario) || usuario.perfil === "ABASTECIMIENTO") && (
-            <Link href="/bodega/nuevo" className={botonPrimario}>
-              Nuevo repuesto
-            </Link>
-          )}
+          <div className="flex flex-wrap items-center gap-3">
+            <a href="/bodega/exportar" className="text-marca underline">
+              Descargar existencias en Excel
+            </a>
+            {(operaBodega(usuario) || usuario.perfil === "ABASTECIMIENTO") && (
+              <Link href="/bodega/nuevo" className={botonPrimario}>
+                Nuevo repuesto
+              </Link>
+            )}
+          </div>
         </div>
         <MenuBodega actual="/bodega" opera={operaBodega(usuario)} />
         <form className={`${tarjeta} grid items-end gap-3 sm:grid-cols-[1fr_auto_auto_auto]`}>

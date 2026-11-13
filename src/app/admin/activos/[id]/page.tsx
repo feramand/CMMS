@@ -6,9 +6,10 @@ import { ArbolEditable } from "@/componentes/arbol-sistemas";
 import { FichaTecnica } from "@/componentes/ficha-tecnica";
 import { AvisoError, botonPrimario, botonSecundario, campo, ChipOt, ChipSat, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { activos, lecturasContador, ordenesTrabajo, pautas, plantas, sectores, solicitudes, solicitudesRepuesto, tiposMaquina } from "@/db/schema";
+import { activos, competencias, lecturasContador, ordenesTrabajo, pautas, plantas, sectores, solicitudes, solicitudesRepuesto, tiposMaquina, usuarios } from "@/db/schema";
 import { aplanar } from "@/lib/arbol";
 import { nombreCategoria } from "@/lib/categorias";
+import { NIVELES } from "@/lib/competencias-core";
 import { listarOts, listarSolicitudes } from "@/lib/consultas";
 import { exigirPerfil } from "@/lib/dal";
 import { fallasRecurrentes } from "@/lib/indicadores";
@@ -34,6 +35,12 @@ export default async function FichaActivo({ params, searchParams }: Props) {
     .where(eq(activos.id, id));
   if (!a) notFound();
   const m = a.activo;
+  const competentes = await db
+    .select({ nombre: usuarios.nombre, nivel: competencias.nivel })
+    .from(competencias)
+    .innerJoin(usuarios, eq(usuarios.id, competencias.usuarioId))
+    .where(eq(competencias.activoId, id))
+    .orderBy(asc(usuarios.nombre));
   const [listaPautas, lecturas, listaPlantas, listaTipos, todosLosSistemas, sats, ots, repuestos] = await Promise.all([
     listarPautas(eq(pautas.activoId, id)),
     db.select().from(lecturasContador).where(eq(lecturasContador.activoId, id)).orderBy(desc(lecturasContador.leidaEn), desc(lecturasContador.id)).limit(5),
@@ -292,6 +299,18 @@ export default async function FichaActivo({ params, searchParams }: Props) {
               ))}
             </ul>
           )}
+        </section>
+
+        <section className={`${tarjeta} flex flex-col gap-2`}>
+          <h2 className="text-lg font-bold">Técnicos con competencia en esta máquina · {competentes.length}</h2>
+          {competentes.length === 0 ? (
+            <p className="text-slate-600">Nadie tiene competencia registrada.</p>
+          ) : (
+            <p>{competentes.map((c) => `${c.nombre} (${NIVELES.find((n) => n.valor === c.nivel)?.nombre.toLowerCase()})`).join(" · ")}</p>
+          )}
+          <Link href="/admin/competencias" className="text-marca underline">
+            Ver la matriz de competencias
+          </Link>
         </section>
 
         <section className={`${tarjeta} flex flex-col gap-2`}>

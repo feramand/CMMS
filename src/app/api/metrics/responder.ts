@@ -8,7 +8,7 @@ import { despacharPendientes } from "@/lib/push";
  * encabezado «Authorization: Bearer …». Responde 200 si el mensaje se procesó o se ignoró
  * a propósito, y 422 si venía mal: en ese caso el conector no debe reintentarlo sin corregirlo.
  */
-export async function responder(request: Request, tipo: "GIROS" | "DETENCION"): Promise<Response> {
+export async function responder(request: Request, tipo: "GIROS" | "DETENCION" | "FIN_DETENCION"): Promise<Response> {
   const esperada = process.env.METRICS_API_KEY;
   if (!esperada) return Response.json({ error: "La integración con Metrics no está configurada." }, { status: 503 });
   const recibida = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? null;

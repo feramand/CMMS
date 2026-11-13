@@ -37,6 +37,9 @@ export default async function Compras() {
             </div>
           ))}
         </div>
+        <Link href="/compras/verificar" className="text-marca underline">
+          Verificar el código de una orden de compra impresa
+        </Link>
         {porComprar > 0 && (
           <Link href="/compras/sc/nueva?propuesta=1" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-base">
             <b>

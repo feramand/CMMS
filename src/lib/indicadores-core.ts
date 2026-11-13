@@ -102,6 +102,8 @@ export async function informe(db: DB, desde: string, hasta: string, ahora = new 
   const tope = new Date(Math.min(fin.getTime(), ahora.getTime()));
   const minutosPeriodo = Math.max(0, minutosEntre(inicio, tope) ?? 0);
   const empieza = sql<Date>`coalesce(${solicitudes.detenidaEn}, ${solicitudes.creadaEn})`;
+  // La detención termina cuando Metrics informa que la máquina volvió a producir; sin ese dato, al cerrar la solicitud.
+  const termina = sql<Date | null>`coalesce(${solicitudes.reanudadaEn}, ${solicitudes.cerradaEn})`;
 
   // ---------- Breakdown Downtime (BD): tiempo detenido, MTTR, MTBF ----------
   const crudas = await db
@@ -117,6 +119,7 @@ export async function informe(db: DB, desde: string, hasta: string, ahora = new 
       creadaEn: solicitudes.creadaEn,
       tomadaEn: solicitudes.tomadaEn,
       cerradaEn: solicitudes.cerradaEn,
+      reanudadaEn: solicitudes.reanudadaEn,
       otId: solicitudes.otId,
     })
     .from(solicitudes)
@@ -130,10 +133,10 @@ export async function informe(db: DB, desde: string, hasta: string, ahora = new 
         inArray(solicitudes.categoria, TIPOS_BD.map((t) => t.valor)),
         ne(solicitudes.estado, "ANULADA"),
         lt(empieza, fin),
-        or(isNull(solicitudes.cerradaEn), gt(solicitudes.cerradaEn, inicio)),
+        or(isNull(termina), gt(termina, inicio)),
       ),
     );
-  const fallas = crudas.map((f) => ({ ...f, desde: f.detenidaEn ?? f.creadaEn, hasta: f.cerradaEn }));
+  const fallas = crudas.map((f) => ({ ...f, desde: f.detenidaEn ?? f.creadaEn, hasta: f.reanudadaEn ?? f.cerradaEn }));
   const maquinas: FilaMaquina[] = downtimePorMaquina(fallas, inicio, fin, ahora)
     .map((d) => {
       const propias = fallas.filter((f) => f.activoId === d.activoId);

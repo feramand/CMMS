@@ -302,6 +302,21 @@ describe.skipIf(!url)("preventivo y Metrics (integración)", () => {
       expect((await parte(c.id, { operador: false, especialidadId: espEle })).participa).toBe(false);
     });
 
+it("matriz de competencias: nivel de cada técnico por máquina", async () => {
+      const { guardarCompetencias } = await import("./competencias-core");
+      await guardarCompetencias(db, jefe, mec.id, { [maquina]: "AVANZADO" });
+      await guardarCompetencias(db, jefe, ele.id, { [maquina]: "BASICO" });
+      await guardarCompetencias(db, jefe, mec.id, { [maquina]: "INTERMEDIO" }); // se actualiza, no se duplica
+      const filas = await db.select().from(schema.competencias);
+      expect(filas.map((f) => [f.usuarioId, f.nivel]).sort()).toEqual([[mec.id, "INTERMEDIO"], [ele.id, "BASICO"]].sort());
+      await guardarCompetencias(db, jefe, ele.id, { [maquina]: "" }); // vacío: se quita
+      expect(await db.select().from(schema.competencias)).toHaveLength(1);
+      await expect(guardarCompetencias(db, mec, mec.id, { [maquina]: "AVANZADO" })).rejects.toThrow("Solo jefe, planificador o administrador");
+      await expect(guardarCompetencias(db, jefe, operador.id, { [maquina]: "BASICO" })).rejects.toThrow("Elige un técnico");
+      await expect(guardarCompetencias(db, jefe, mec.id, { [maquina]: "EXPERTO" })).rejects.toThrow("Nivel no válido");
+      await expect(guardarCompetencias(db, jefe, mec.id, { 99999: "BASICO" })).rejects.toThrow("no existe");
+    });
+
 it("carga las cartillas de una máquina desde su planilla, con la ficha completa de cada tarea", async () => {
       await registrarLecturaManual(db, jefe, maquina, 1_000_000);
       const fila = (n: number, pauta: string, encargado: string, extra: Record<string, string> = {}) => ({
@@ -501,6 +516,17 @@ it("carga las cartillas de una máquina desde su planilla, con la ficha completa
       expect((await recibirDeMetrics(db, "DETENCION", otra)).resultado).toBe("IGNORADO");
       expect(await db.select().from(schema.solicitudes)).toHaveLength(1);
       expect(await db.select().from(schema.avisosSolicitud)).toHaveLength(1);
+      // Fin de detención: la máquina volvió a producir. Vale el último fin de los apuntamientos de la solicitud.
+      const fin = (id: string, fechaHora?: string) => recibirDeMetrics(db, "FIN_DETENCION", { idApuntamiento: id, fechaHora });
+      expect(await fin("A-1")).toMatchObject({ resultado: "ERROR" });
+      expect((await fin("A-1", "2026-11-12T12:00:00Z")).detalle).toBe("El fin de la detención es anterior a su inicio.");
+      expect((await fin("A-1", "2026-11-12T13:00:00Z")).resultado).toBe("PROCESADO");
+      expect((await fin("A-2", "2026-11-12T14:30:00Z")).resultado).toBe("PROCESADO"); // llegó como aviso de la misma solicitud
+      expect((await fin("A-1", "2026-11-12T13:00:00Z")).resultado).toBe("IGNORADO");
+      expect((await fin("Z-9", "2026-11-12T13:00:00Z")).detalle).toBe("El apuntamiento Z-9 no generó ninguna solicitud.");
+      const [conFin] = await db.select().from(schema.solicitudes);
+      expect(conFin.reanudadaEn?.toISOString()).toBe("2026-11-12T14:30:00.000Z");
+      expect(conFin.estado).toBe("PENDIENTE"); // la solicitud sigue abierta hasta que el técnico la cierre
       // Distinta categoría: solicitud nueva.
       await recibirDeMetrics(db, "DETENCION", { ...base, idApuntamiento: "A-3", codigoFalla: "E01" });
       expect(await db.select().from(schema.solicitudes).where(and(eq(schema.solicitudes.categoria, "ELECTRICA")))).toHaveLength(1);

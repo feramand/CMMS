@@ -11,6 +11,7 @@ const DISPONIBLES = [
   { href: "/soluciones", nombre: "Base de soluciones" },
   { href: "/admin/activos", nombre: "Activos" },
   { href: "/admin/usuarios", nombre: "Usuarios" },
+  { href: "/admin/competencias", nombre: "Matriz de competencias" },
   { href: "/admin/carga", nombre: "Carga inicial" },
   { href: "/admin/configuracion", nombre: "Configuración" },
 ];

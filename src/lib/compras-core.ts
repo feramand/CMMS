@@ -8,6 +8,7 @@ import type { DB } from "@/db";
 import {
   almacenes,
   autorizacionesOc,
+  bitacora,
   centrosCosto,
   cuentasContables,
   lineasOc,
@@ -59,6 +60,26 @@ export const IVA = 0.19;
 
 /** Número visible de la OC y de la SC. */
 export const folioOc = (id: number) => `OC-${String(id).padStart(5, "0")}`;
+/** Número que tendrá la próxima orden de compra. */
+export async function proximoFolioOc(db: DB): Promise<number> {
+  const r = await db.execute(sql`SELECT CASE WHEN is_called THEN last_value + 1 ELSE last_value END AS n FROM ordenes_compra_id_seq`);
+  return Number((r as unknown as { rows: { n: string }[] }).rows[0].n);
+}
+
+/**
+ * El administrador fija desde qué número sigue el correlativo de las órdenes de compra, para
+ * continuar el folio que la empresa lleva fuera del sistema. Solo hacia adelante: un número
+ * menor repetiría folios ya usados.
+ */
+export async function fijarProximoFolioOc(db: DB, actor: UsuarioSesion, numero: number): Promise<void> {
+  if (actor.perfil !== "ADMINISTRADOR") throw new ErrorDeNegocio("Solo el administrador cambia el folio de las órdenes de compra.");
+  if (!Number.isInteger(numero) || numero < 1 || numero > 2_000_000_000) throw new ErrorDeNegocio("El folio debe ser un número entero mayor que cero.");
+  const actual = await proximoFolioOc(db);
+  if (numero < actual) throw new ErrorDeNegocio(`El folio no puede ser menor que ${actual}: los anteriores ya se usaron o se saltaron.`);
+  await db.execute(sql`SELECT setval('ordenes_compra_id_seq', ${numero}, false)`);
+  await db.insert(bitacora).values({ usuarioId: actor.id, accion: "FIJAR_FOLIO_OC", entidad: "ordenes_compra", detalle: { desde: actual, proximo: numero } });
+}
+
 export const folioSc = (id: number) => `SC-${String(id).padStart(5, "0")}`;
 
 export function gestionaCompras(actor: UsuarioSesion): boolean {

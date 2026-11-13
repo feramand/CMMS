@@ -17,6 +17,7 @@ const MENU_ADMIN = [
   { href: "/admin/activos", nombre: "Activos" },
   { href: "/admin/tipos", nombre: "Tipos de máquina" },
   { href: "/admin/usuarios", nombre: "Usuarios" },
+  { href: "/admin/competencias", nombre: "Competencias" },
   { href: "/admin/carga", nombre: "Carga inicial" },
   { href: "/admin/metrics", nombre: "Metrics" },
   { href: "/admin/configuracion", nombre: "Configuración" },

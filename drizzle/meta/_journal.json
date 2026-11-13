@@ -120,6 +120,13 @@
       "when": 1794561690854,
       "tag": "0016_etapa5_previos",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794593167512,
+      "tag": "0017_cierre",
+      "breakpoints": true
     }
   ]
 }
