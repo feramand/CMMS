@@ -5,23 +5,46 @@ Aplicación web adaptable (computador y celular) que se instala en un servidor d
 
 ## Estado
 
-**Etapa 0 (base): terminada.** Ingreso con PIN o contraseña, seis perfiles con permisos,
-gestión de usuarios, turnos y datos base.
+Las etapas 0 a 4 están programadas y probadas con 163 pruebas automáticas. Falta probarlas
+con datos reales en el servidor de la empresa.
 
-**Etapa 1 (activos, solicitudes y órdenes de trabajo): terminada.**
+| Etapa | Contenido | Estado |
+| --- | --- | --- |
+| 0 | Ingreso, perfiles, usuarios, turnos | Programada |
+| 1 | Activos, solicitudes de atención, órdenes de trabajo | Programada |
+| 2 | Mantenimiento preventivo e integración con Metrics | Programada; falta el conector real |
+| 3 | Bodega de repuestos | Programada; falta la carga desde Maintscape |
+| 4 | Compras, costos y contabilidad | Programada; falta el formato para Fin700 |
+| 5 | Indicadores y reportes | Pendiente (ya existe el downtime por falla) |
+| 6 | Modo sin conexión | Pendiente |
 
-- Activos con ficha técnica editable, sectores, historial y aviso de fallas recurrentes.
-- Solicitudes de atención (SAT): reporte manual sin duplicados, toma por un solo técnico,
-  asignación por jefatura, cierre simple (sector + solución) y escalamiento a orden de trabajo.
-- Órdenes de trabajo con folio AANNNN, estados, asignación, repuestos y causa raíz opcional.
-- Trabajo con apoyo, solicitud de repuesto con máquina heredada y entrega por bodega.
-- Fotos adjuntas al reportar, al cerrar y al pedir repuestos.
-- Tablero Kanban de solicitudes y órdenes de trabajo.
-- Avisos dentro de la aplicación y notificaciones push al celular.
-- Carga inicial de activos y usuarios desde Excel, con plantillas descargables.
-- Horario semanal de técnicos de horario fijo, feriados y apagado automático del turno.
+**Base.** Ingreso con PIN o contraseña, seis perfiles con permisos validados en el servidor,
+usuarios, turnos, horarios, feriados y bitácora de cambios.
 
-Próxima etapa: mantenimiento preventivo (pautas por tiempo y por giros) e integración con Metrics.
+**Activos.** Ficha técnica, tipos de máquina con plantilla de sistemas, árbol de sistemas por
+máquina, estado del equipo, etiqueta con código QR e historial de trabajos.
+
+**Solicitudes y órdenes de trabajo.** Reporte de fallas sin duplicados, toma por un solo
+técnico, cierre simple, escalamiento a orden de trabajo con folio AANNNN, trabajo con apoyo,
+causa raíz opcional, fotos, tablero Kanban, avisos y notificaciones push.
+
+**Preventivo.** Plan de mantenimiento por máquina con cartillas por contador o por tiempo,
+actividades por grupo (operador o especialidad), liberación al 80 %, límite al 120 %, carga del
+plan desde Excel e indicador de downtime por falla.
+
+**Metrics.** Recibe lecturas de contador y detenciones clasificadas por HTTPS
+(`/api/metrics/giros` y `/api/metrics/detenciones`), con clave en `METRICS_API_KEY`.
+
+**Bodega.** Catálogo de repuestos (código interno, código de fabricante, marca, ubicación),
+tres almacenes, existencias solo por movimientos, costo por precio medio ponderado, inventarios,
+carga desde Excel. Los repuestos se piden desde la orden de trabajo; una entrega parcial manda
+el resto a solicitud de compra.
+
+**Compras.** Proveedores, solicitudes de compra visadas por el planificador o el jefe, una o
+más órdenes de compra por solicitud, cinco monedas, IVA o exenta, cuenta contable y centro de
+costo, cotización adjunta, dos autorizaciones obligatorias (jefe de mantenimiento y gerente de
+producción) y una opcional (gerente general), impresión con el formato de la empresa, recepción
+parcial o total y Excel de movimientos valorizados para contabilidad.
 
 ## Tecnología
 
@@ -67,7 +90,13 @@ Notificaciones push (opcional): generar un par de claves y copiarlas en `.env`.
 npx web-push generate-vapid-keys
 ```
 
-Las fotos adjuntas se guardan en el volumen `cmms_adjuntos`. **Hay que respaldarlo junto con la base de datos.**
+Datos de la empresa para la orden de compra impresa (opcional): `EMPRESA_NOMBRE`, `EMPRESA_RUT`,
+`EMPRESA_DIRECCION` y `EMPRESA_FONO` en `.env`. Para el logo, copiar la imagen a una carpeta
+`empresa/` junto a `docker-compose.yml` y poner `EMPRESA_LOGO=/datos/empresa/logo.png`.
+Ni esos datos ni el logo se guardan en el repositorio.
+
+Las fotos y las cotizaciones adjuntas se guardan en el volumen `cmms_adjuntos`.
+**Hay que respaldarlo junto con la base de datos.**
 
 Respaldo de la base de datos:
 
@@ -80,6 +109,6 @@ docker compose exec db pg_dump -U cmms cmms > respaldo-$(date +%F).sql
 | Carpeta | Contenido |
 | --- | --- |
 | `src/db` | Esquema de la base de datos, migraciones y datos iniciales |
-| `src/lib` | Reglas de negocio (ingreso, usuarios, permisos, RUT) y sus pruebas |
-| `src/app` | Pantallas: ingreso, inicio operativo y portal administrativo |
+| `src/lib` | Reglas de negocio (trabajos, preventivo, bodega, compras, permisos) y sus pruebas |
+| `src/app` | Pantallas: ingreso, inicio operativo, portal administrativo, bodega y compras |
 | `drizzle` | Migraciones SQL generadas |
