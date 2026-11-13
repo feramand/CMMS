@@ -4,6 +4,7 @@
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { DB } from "@/db";
 import {
+  activos,
   almacenes,
   bitacora,
   existencias,
@@ -14,10 +15,12 @@ import {
   repuestosActivo,
   solicitudesRepuesto,
   tomasInventario,
+  usuarios,
   type TipoMovimiento,
 } from "@/db/schema";
 import type { UsuarioSesion } from "./auth-core";
 import { cargar, type Columna, type Fila, normalizar } from "./carga-core";
+import { crearSc, folioSc } from "./compras-core";
 import { idsPorPerfil, notificar } from "./notificar";
 import { ErrorDeNegocio } from "./usuarios-core";
 
@@ -82,6 +85,8 @@ export type DatosRepuesto = {
   codigo: string;
   codigoFabricante?: string | null;
   marca?: string | null;
+  /** Cuenta contable a la que se imputa. undefined: no se toca. */
+  cuentaId?: number | null;
   descripcion: string;
   unidad?: string | null;
   familia?: string | null;
@@ -112,6 +117,7 @@ function limpiarRepuesto(d: DatosRepuesto) {
     descripcion,
     codigoFabricante: d.codigoFabricante?.trim() || null,
     marca: d.marca?.trim() || null,
+    ...(d.cuentaId === undefined ? {} : { cuentaId: d.cuentaId || null }),
     unidad: d.unidad?.trim().toLowerCase() || "unidad",
     familia: d.familia?.trim() || null,
     stockMinimo: r2(stockMinimo),
@@ -319,18 +325,38 @@ export async function registrarSalida(db: DB, actor: UsuarioSesion, d: DatosSali
   return db.transaction((tx) => salida(tx, actor, d));
 }
 
+/** Manda a solicitud de compra lo que falta de una solicitud de repuesto. La SC la visa el planificador o el jefe. */
+async function pedirResto(tx: Tx, actor: UsuarioSesion, s: typeof solicitudesRepuesto.$inferSelect, repuestoId: number | null, falta: number) {
+  if (s.scId) throw new ErrorDeNegocio(`Lo que falta ya está pedido en la solicitud de compra ${folioSc(s.scId)}.`);
+  const [origen] = await tx
+    .select({ folio: ordenesTrabajo.folio, activo: activos.nombre, centroCostoId: activos.centroCostoId, solicitante: usuarios.nombre })
+    .from(solicitudesRepuesto)
+    .innerJoin(activos, eq(activos.id, solicitudesRepuesto.activoId))
+    .innerJoin(usuarios, eq(usuarios.id, solicitudesRepuesto.solicitanteId))
+    .leftJoin(ordenesTrabajo, eq(ordenesTrabajo.id, solicitudesRepuesto.otId))
+    .where(eq(solicitudesRepuesto.id, s.id));
+  const scId = await crearSc(tx as unknown as DB, actor, {
+    lineas: [{ repuestoId, descripcion: [s.descripcion, s.codigoFabricante].filter(Boolean).join(" · "), cantidad: falta }],
+    centroCostoId: origen.centroCostoId,
+    nota: `Para ${origen.activo}${origen.folio ? ` · OT ${origen.folio}` : ""} · pidió ${origen.solicitante}`,
+  });
+  await tx.update(solicitudesRepuesto).set({ scId }).where(eq(solicitudesRepuesto.id, s.id));
+  return scId;
+}
+
 /**
- * Entrega de una solicitud de repuesto: descuenta existencias, carga el costo a la OT de la
- * solicitud y avisa a quien pidió.
+ * Bodega entrega un repuesto pedido: descuenta existencias y carga el costo a la OT. Si entrega menos
+ * de lo pedido puede mandar el resto a solicitud de compra; la solicitud de repuesto sigue abierta
+ * hasta completarse. Si no pide el resto, se cierra con lo entregado.
  */
 export async function entregarSolicitud(
   db: DB,
   actor: UsuarioSesion,
   solicitudId: number,
-  d: { repuestoId: number; almacenId: number; cantidad: number },
-): Promise<void> {
+  d: { repuestoId: number; almacenId: number; cantidad: number; pedirResto?: boolean },
+): Promise<{ scId: number | null }> {
   exigirOperar(actor);
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const [s] = await tx.select().from(solicitudesRepuesto).where(eq(solicitudesRepuesto.id, solicitudId)).for("update");
     if (!s) throw new ErrorDeNegocio("La solicitud no existe.");
     if (s.estado !== "PENDIENTE" && s.estado !== "APROBADA") throw new ErrorDeNegocio("La solicitud ya fue resuelta.");
@@ -343,11 +369,38 @@ export async function entregarSolicitud(
       recibeId: s.solicitanteId,
       solicitudRepuestoId: s.id,
     });
+    const entregada = r2(s.entregada + d.cantidad);
+    const falta = r2(s.cantidad - entregada);
+    // Queda abierta solo si falta algo y ese resto está (o queda ahora) en una solicitud de compra.
+    const abierta = falta > 0 && (d.pedirResto || s.scId !== null);
+    let scId = s.scId;
+    if (falta > 0 && d.pedirResto && !s.scId) scId = await pedirResto(tx, actor, s, d.repuestoId, falta);
     await tx
       .update(solicitudesRepuesto)
-      .set({ estado: "ENTREGADA", repuestoId: d.repuestoId, resueltaEn: new Date(), resueltaPor: actor.id })
+      .set({ entregada, repuestoId: d.repuestoId, ...(abierta ? {} : { estado: "ENTREGADA" as const, resueltaEn: new Date(), resueltaPor: actor.id }) })
       .where(eq(solicitudesRepuesto.id, s.id));
-    await notificar(tx, [s.solicitanteId], `Repuesto entregado: ${s.descripcion}`, "/inicio");
+    await notificar(
+      tx,
+      [s.solicitanteId],
+      falta > 0
+        ? `Repuesto entregado en parte (${entregada} de ${s.cantidad}): ${s.descripcion}${abierta ? ". El resto está en compra." : ""}`
+        : `Repuesto entregado: ${s.descripcion}`,
+      "/inicio",
+    );
+    return { scId };
+  });
+}
+
+/** Sin existencias: bodega manda toda la cantidad pendiente a solicitud de compra. La solicitud de repuesto sigue abierta. */
+export async function pedirCompraDeSolicitud(db: DB, actor: UsuarioSesion, solicitudId: number, repuestoId?: number | null): Promise<number> {
+  exigirOperar(actor);
+  return db.transaction(async (tx) => {
+    const [s] = await tx.select().from(solicitudesRepuesto).where(eq(solicitudesRepuesto.id, solicitudId)).for("update");
+    if (!s) throw new ErrorDeNegocio("La solicitud no existe.");
+    if (s.estado !== "PENDIENTE" && s.estado !== "APROBADA") throw new ErrorDeNegocio("La solicitud ya fue resuelta.");
+    const scId = await pedirResto(tx, actor, s, repuestoId ?? s.repuestoId, r2(s.cantidad - s.entregada));
+    await notificar(tx, [s.solicitanteId], `Sin existencias: ${s.descripcion} pasó a compra (${folioSc(scId)})`, "/inicio");
+    return scId;
   });
 }
 

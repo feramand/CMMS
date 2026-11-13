@@ -10,6 +10,7 @@ import { activos, movimientos, repuestosActivo } from "@/db/schema";
 import { operaBodega, TIPOS_MOVIMIENTO } from "@/lib/bodega-core";
 import { listarActivosVigentes, listarTecnicos } from "@/lib/consultas";
 import { listarAlmacenes, listarExistencias, listarMovimientos } from "@/lib/consultas-bodega";
+import { listarCuentas } from "@/lib/consultas-compras";
 import { exigirPerfil } from "@/lib/dal";
 import { cant, pesos } from "@/lib/formato";
 import { fechaHora } from "@/lib/tiempo";
@@ -22,7 +23,7 @@ export default async function FichaRepuesto({ params, searchParams }: Props) {
   const id = Number((await params).id);
   if (!Number.isInteger(id)) notFound();
   const { error, aviso } = await searchParams;
-  const [[r], almacenes, movs, asociadas, maquinas, tecnicos] = await Promise.all([
+  const [[r], almacenes, movs, asociadas, maquinas, tecnicos, cuentas] = await Promise.all([
     listarExistencias({ ids: [id], inactivos: true }),
     listarAlmacenes(),
     listarMovimientos(eq(movimientos.repuestoId, id), 100),
@@ -33,6 +34,7 @@ export default async function FichaRepuesto({ params, searchParams }: Props) {
       .where(eq(repuestosActivo.repuestoId, id)),
     listarActivosVigentes(),
     listarTecnicos(),
+    listarCuentas(),
   ]);
   if (!r) notFound();
   const opera = operaBodega(usuario);
@@ -108,6 +110,7 @@ export default async function FichaRepuesto({ params, searchParams }: Props) {
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <Dato etiqueta="Código de parte del fabricante">{r.codigoFabricante ?? "—"}</Dato>
             <Dato etiqueta="Marca">{r.marca ?? "—"}</Dato>
+            <Dato etiqueta="Cuenta contable">{cuentas.find((c) => c.id === r.cuentaId)?.codigo ?? "—"}</Dato>
             <Dato etiqueta="Familia">{r.familia ?? "—"}</Dato>
             <Dato etiqueta="Total en existencia">
               {cant(r.total)} {r.unidad}
@@ -265,7 +268,7 @@ export default async function FichaRepuesto({ params, searchParams }: Props) {
           <details className={tarjeta}>
             <summary className="cursor-pointer text-lg font-bold">Editar datos del repuesto</summary>
             <div className="mt-3">
-              <FormularioRepuesto accion={accionEditarRepuesto} repuesto={r} maquinas={maquinas} asociadas={asociadas.map((a) => a.id)} />
+              <FormularioRepuesto accion={accionEditarRepuesto} repuesto={r} maquinas={maquinas} asociadas={asociadas.map((a) => a.id)} cuentas={cuentas} />
             </div>
           </details>
         )}

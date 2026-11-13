@@ -1,0 +1,1 @@
+ALTER TABLE "solicitudes_compra" ADD COLUMN "cerrada_en" timestamp with time zone;

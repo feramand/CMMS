@@ -3,6 +3,7 @@ import { Encabezado } from "@/componentes/encabezado";
 import { FormularioRepuesto } from "@/componentes/formulario-repuesto";
 import { AvisoError, tarjeta } from "@/componentes/ui";
 import { listarActivosVigentes } from "@/lib/consultas";
+import { listarCuentas } from "@/lib/consultas-compras";
 import { exigirPerfil } from "@/lib/dal";
 import { accionCrearRepuesto } from "../actions";
 
@@ -21,7 +22,7 @@ export default async function NuevoRepuesto({ searchParams }: { searchParams: Pr
         </div>
         <AvisoError mensaje={error} />
         <section className={tarjeta}>
-          <FormularioRepuesto accion={accionCrearRepuesto} maquinas={await listarActivosVigentes()} />
+          <FormularioRepuesto accion={accionCrearRepuesto} maquinas={await listarActivosVigentes()} cuentas={await listarCuentas()} />
         </section>
         <p className="text-sm text-slate-600">
           Las existencias y el costo no se escriben aquí: se registran con una entrada en la ficha del repuesto.

@@ -320,24 +320,27 @@ describe.skipIf(!url)("solicitudes y órdenes de trabajo (integración)", () => 
     await expect(asignarOt(db, jefe, id, { responsableId: mec2.id })).rejects.toThrow("cerrada");
   });
 
-  it("el repuesto hereda la máquina del trabajo y avisa a bodega", async () => {
+  const otBase = () => ({ activoId: maquina, tipo: "CORRECTIVA" as const, descripcion: "x", especialidadId: espMec, prioridad: "MEDIA" as const });
+
+  it("el repuesto se pide desde la OT, hereda su máquina y avisa a bodega", async () => {
     const { id } = await nueva("MECANICA");
     await tomarSolicitud(db, mec1, id);
-    const rep = await solicitarRepuesto(db, mec1, {
-      solicitudId: id, cantidad: 2, codigoFabricante: " 6205-2RS ", descripcion: "Rodamiento",
-    });
+    // Desde la solicitud (SAT) no se piden repuestos: primero se convierte en OT.
+    await expect(solicitarRepuesto(db, mec1, { solicitudId: id, cantidad: 1, descripcion: "Rodamiento" })).rejects.toThrow("primero convierte la solicitud en orden de trabajo");
+    const ot = (await crearOt(db, jefe, otBase())).id;
+    const rep = await solicitarRepuesto(db, mec1, { otId: ot, cantidad: 2, codigoFabricante: " 6205-2RS ", descripcion: "Rodamiento" });
     const [fila] = await db.select().from(schema.solicitudesRepuesto);
-    expect(fila).toMatchObject({ id: rep, activoId: maquina, solicitudId: id, otId: null, cantidad: 2, codigoFabricante: "6205-2RS", estado: "PENDIENTE" });
+    expect(fila).toMatchObject({ id: rep, activoId: maquina, solicitudId: null, otId: ot, cantidad: 2, codigoFabricante: "6205-2RS", estado: "PENDIENTE" });
     expect(await avisosDe(bodeguero)).toContain("Solicitud de repuesto: 2 × Rodamiento");
-    await expect(solicitarRepuesto(db, mec1, { solicitudId: id, cantidad: 0, descripcion: "x" })).rejects.toThrow("cantidad");
-    await expect(solicitarRepuesto(db, mec1, { solicitudId: id, cantidad: 1.5, descripcion: "x" })).rejects.toThrow("cantidad");
-    await expect(solicitarRepuesto(db, mec1, { cantidad: 1, descripcion: "x" })).rejects.toThrow("solicitud, una orden");
-    await expect(solicitarRepuesto(db, operador, { solicitudId: id, cantidad: 1, descripcion: "x" })).rejects.toThrow(ErrorDeNegocio);
+    await expect(solicitarRepuesto(db, mec1, { otId: ot, cantidad: 0, descripcion: "x" })).rejects.toThrow("cantidad");
+    await expect(solicitarRepuesto(db, mec1, { otId: ot, cantidad: 1.5, descripcion: "x" })).rejects.toThrow("cantidad");
+    await expect(solicitarRepuesto(db, mec1, { cantidad: 1, descripcion: "x" })).rejects.toThrow("orden de trabajo o una pauta");
+    await expect(solicitarRepuesto(db, operador, { otId: ot, cantidad: 1, descripcion: "x" })).rejects.toThrow(ErrorDeNegocio);
   });
 
   it("bodega entrega o rechaza una sola vez y avisa al solicitante", async () => {
-    const { id } = await nueva("MECANICA");
-    const rep = await solicitarRepuesto(db, mec1, { solicitudId: id, cantidad: 1, descripcion: "Retén" });
+    const ot = (await crearOt(db, jefe, otBase())).id;
+    const rep = await solicitarRepuesto(db, mec1, { otId: ot, cantidad: 1, descripcion: "Retén" });
     await expect(resolverRepuesto(db, mec1, rep, "ENTREGADA")).rejects.toThrow("bodega");
     await resolverRepuesto(db, bodeguero, rep, "ENTREGADA");
     expect((await db.select().from(schema.solicitudesRepuesto))[0]).toMatchObject({ estado: "ENTREGADA", resueltaPor: bodeguero.id });

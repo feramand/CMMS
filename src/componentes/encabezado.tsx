@@ -12,6 +12,7 @@ const MENU_ADMIN = [
   { href: "/admin/preventivo", nombre: "Preventivo" },
   { href: "/admin/indicadores", nombre: "Indicadores" },
   { href: "/bodega", nombre: "Bodega" },
+  { href: "/compras", nombre: "Compras" },
   { href: "/admin/activos", nombre: "Activos" },
   { href: "/admin/tipos", nombre: "Tipos de máquina" },
   { href: "/admin/usuarios", nombre: "Usuarios" },
@@ -26,11 +27,12 @@ export async function Encabezado({ usuario }: { usuario: UsuarioSesion }) {
     usuario.perfil === "ADMINISTRADOR" || usuario.perfil === "JEFE_PLANIFICADOR"
       ? MENU_ADMIN
       : usuario.perfil === "ABASTECIMIENTO"
-        ? MENU_ADMIN.filter((m) => m.href === "/admin" || m.href === "/bodega")
+        ? MENU_ADMIN.filter((m) => m.href === "/admin" || m.href === "/bodega" || m.href === "/compras")
         : usuario.perfil === "BODEGUERO"
           ? [
               { href: "/inicio", nombre: "Inicio" },
               { href: "/bodega", nombre: "Bodega" },
+              { href: "/compras", nombre: "Compras" },
             ]
           : null;
   return (

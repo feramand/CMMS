@@ -283,11 +283,7 @@ export async function solicitarRepuesto(
         .where(eq(ordenesTrabajo.id, datos.otId));
       activoId = ot?.activoId;
     } else if (datos.solicitudId) {
-      const [s] = await tx
-        .select({ activoId: solicitudes.activoId })
-        .from(solicitudes)
-        .where(eq(solicitudes.id, datos.solicitudId));
-      activoId = s?.activoId;
+      throw new ErrorDeNegocio("Para pedir repuestos, primero convierte la solicitud en orden de trabajo.");
     } else if (datos.cicloId) {
       const [c] = await tx
         .select({ activoId: pautas.activoId })
@@ -296,7 +292,7 @@ export async function solicitarRepuesto(
         .where(eq(ciclosPauta.id, datos.cicloId));
       activoId = c?.activoId;
     }
-    if (!activoId) throw new ErrorDeNegocio("El repuesto debe pedirse desde una solicitud, una orden de trabajo o una pauta.");
+    if (!activoId) throw new ErrorDeNegocio("El repuesto debe pedirse desde una orden de trabajo o una pauta.");
     const [nueva] = await tx
       .insert(solicitudesRepuesto)
       .values({

@@ -6,7 +6,7 @@ import { accionCerrar, accionEscalar, accionTomar } from "@/app/trabajos/actions
 import { CamposApoyo } from "@/componentes/apoyo";
 import { Encabezado } from "@/componentes/encabezado";
 import { CampoFotos, Fotos } from "@/componentes/fotos";
-import { AvisoError, botonSecundario, campo, ChipSat, Dato, tarjeta } from "@/componentes/ui";
+import { AvisoError, campo, ChipSat, Dato, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
 import { adjuntos, apoyos, sectores, solicitudes, solicitudesRepuesto, usuarios } from "@/db/schema";
 import { nombreCategoria, ORIGENES_REALES } from "@/lib/categorias";
@@ -253,9 +253,9 @@ export default async function DetalleSolicitud({ params, searchParams }: Props) 
                 </p>
               </form>
             </details>
-            <Link href={`/repuesto?sat=${s.id}`} className={`${botonSecundario} h-14 text-lg`}>
-              Solicitar repuesto
-            </Link>
+            <p className="text-base text-slate-700">
+              ¿Necesitas repuestos? Primero crea la orden de trabajo; los repuestos se piden desde la orden.
+            </p>
           </>
         )}
       </main>

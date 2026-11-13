@@ -14,7 +14,7 @@ const DISPONIBLES = [
   { href: "/admin/configuracion", nombre: "Configuración" },
 ];
 
-const MODULOS = ["Compras", "KPI y reportes"];
+const MODULOS = ["KPI y reportes"];
 
 export default async function PanelAdmin() {
   const usuario = await exigirPerfil("ADMINISTRADOR", "JEFE_PLANIFICADOR", "ABASTECIMIENTO");
@@ -37,6 +37,9 @@ export default async function PanelAdmin() {
             ))}
           <Link href="/bodega" className="flex h-20 items-center rounded-xl bg-white px-4 text-lg font-semibold text-marca shadow-sm">
             Bodega
+          </Link>
+          <Link href="/compras" className="flex h-20 items-center rounded-xl bg-white px-4 text-lg font-semibold text-marca shadow-sm">
+            Compras
           </Link>
           {MODULOS.map((m) => (
             <div

@@ -22,6 +22,7 @@ export type FilaExistencia = {
   codigo: string;
   codigoFabricante: string | null;
   marca: string | null;
+  cuentaId: number | null;
   descripcion: string;
   unidad: string;
   familia: string | null;
@@ -120,6 +121,8 @@ export function solicitudesPendientes(filtro?: SQL) {
     .select({
       id: solicitudesRepuesto.id,
       cantidad: solicitudesRepuesto.cantidad,
+      entregada: solicitudesRepuesto.entregada,
+      scId: solicitudesRepuesto.scId,
       codigo: solicitudesRepuesto.codigoFabricante,
       descripcion: solicitudesRepuesto.descripcion,
       repuestoId: solicitudesRepuesto.repuestoId,
