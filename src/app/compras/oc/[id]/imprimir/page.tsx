@@ -104,6 +104,8 @@ export default async function ImprimirOc({ params }: { params: Promise<{ id: str
           <dl className="grid grid-cols-[8rem_1fr] gap-x-2 gap-y-0.5 border border-slate-800 p-2">
             <Par nombre="Fecha entrega">{oc.fechaEntrega ? fecha(oc.fechaEntrega) : ""}</Par>
             <Par nombre="Forma de pago">{oc.condicionPago}</Par>
+            {oc.tipo === "IMPORTACION" && <Par nombre="Incoterm">{oc.incoterm}</Par>}
+            {oc.tipo === "IMPORTACION" && <Par nombre="Vía de embarque">{oc.viaEmbarque}</Par>}
           </dl>
           <dl className="grid grid-cols-[8rem_1fr] gap-x-2 gap-y-0.5 border border-t-0 border-slate-800 p-2">
             <Par nombre="Solicita">{oc.solicita}</Par>

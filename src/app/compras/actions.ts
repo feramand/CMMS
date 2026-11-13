@@ -2,7 +2,7 @@
 
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { activos, repuestos, type Moneda, type RolAutorizacion } from "@/db/schema";
+import { activos, repuestos, type Moneda, type RolAutorizacion, type TipoOc, type TipoSc } from "@/db/schema";
 import { documentoDeFormulario, guardarCotizacion } from "@/lib/adjuntos-core";
 import { ejecutar, entero, texto } from "@/lib/accion";
 import { numero } from "@/lib/bodega-core";
@@ -10,7 +10,10 @@ import {
   anularOc,
   autorizarOc,
   cambiarImputacionOc,
+  cerrarOc,
   cerrarSc,
+  conformarServicio,
+  marcarEnviadaOc,
   ROLES_AUTORIZACION,
   crearSc,
   emitirOc,
@@ -48,7 +51,7 @@ export async function accionCrearSc(f: FormData) {
       const [r] = resto.length ? await db.select({ id: repuestos.id }).from(repuestos).where(eq(repuestos.codigo, codigo.trim().toUpperCase())) : [];
       lineas.push({ repuestoId: r?.id ?? null, descripcion: item, cantidad });
     }
-    const id = await crearSc(db, actor, { lineas, centroCostoId: entero(f.get("centroCostoId")) || null, cuentaId: entero(f.get("cuentaId")) || null, nota: texto(f.get("nota")) });
+    const id = await crearSc(db, actor, { lineas, tipo: texto(f.get("tipo")) as TipoSc, centroCostoId: entero(f.get("centroCostoId")) || null, cuentaId: entero(f.get("cuentaId")) || null, nota: texto(f.get("nota")) });
     return `/compras/sc/${id}`;
   });
 }
@@ -77,6 +80,10 @@ export async function accionEmitirOc(f: FormData) {
       referencia: texto(f.get("referencia")),
       proveedorId: entero(f.get("proveedorId")),
       moneda: texto(f.get("moneda")) as Moneda,
+      tipo: (texto(f.get("tipo")) || "NACIONAL") as TipoOc,
+      incoterm: texto(f.get("incoterm")),
+      viaEmbarque: texto(f.get("viaEmbarque")),
+      esCapex: f.get("esCapex") === "on",
       fechaEntrega: texto(f.get("fechaEntrega")),
       condicionPago: texto(f.get("condicionPago")),
       nota: texto(f.get("nota")),
@@ -196,4 +203,22 @@ export async function accionAdjuntarCotizacion(f: FormData) {
     if (!doc) throw new ErrorDeNegocio("Elige el archivo de la cotización.");
     await guardarCotizacion(db, actor, id, doc);
   });
+}
+
+export async function accionEnviadaOc(f: FormData) {
+  const actor = await exigirSesion();
+  const id = entero(f.get("id"));
+  await ejecutar(`/compras/oc/${id}`, () => marcarEnviadaOc(db, actor, id));
+}
+
+export async function accionConformarServicio(f: FormData) {
+  const actor = await exigirSesion();
+  const id = entero(f.get("id"));
+  await ejecutar(`/compras/oc/${id}`, () => conformarServicio(db, actor, id, texto(f.get("factura"))));
+}
+
+export async function accionCerrarOc(f: FormData) {
+  const actor = await exigirSesion();
+  const id = entero(f.get("id"));
+  await ejecutar(`/compras/oc/${id}`, () => cerrarOc(db, actor, id, texto(f.get("nota"))));
 }

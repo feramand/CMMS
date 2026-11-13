@@ -1,7 +1,9 @@
 // Compras: proveedores, solicitudes de compra (SC), órdenes de compra (OC), autorizaciones y recepciones.
-// Flujo: SC enviada → visada por el planificador o el jefe → abastecimiento emite una o más OC →
-// cada OC la autorizan el jefe de mantenimiento y el gerente de producción (el gerente general
-// puede firmar además, es opcional) → recibida en bodega (parcial o total).
+// Flujo: presolicitud (PSC) → la aprueba el jefe o el planificador (o el encargado de bodega, si nació
+// sola por stock mínimo) y pasa a ser solicitud de compra (SC) → abastecimiento emite una o más OC →
+// cada OC sigue la ruta jefe de mantenimiento → gerente de producción (→ gerente general, opcional) →
+// se envía al proveedor → recepción en bodega, o factura firmada por el jefe si es un servicio →
+// abastecimiento cierra la orden.
 import { randomBytes } from "node:crypto";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { DB } from "@/db";
@@ -22,7 +24,10 @@ import {
   usuarios,
   type EstadoOc,
   type Moneda,
+  type OrigenSc,
   type RolAutorizacion,
+  type TipoOc,
+  type TipoSc,
 } from "@/db/schema";
 import type { UsuarioSesion } from "./auth-core";
 import { operaBodega, r2, registrarEntrada } from "./bodega-core";
@@ -81,6 +86,23 @@ export async function fijarProximoFolioOc(db: DB, actor: UsuarioSesion, numero: 
 }
 
 export const folioSc = (id: number) => `SC-${String(id).padStart(5, "0")}`;
+/** Mientras no se aprueba es una presolicitud (PSC); aprobada, el mismo número pasa a ser la SC. */
+export const folioDe = (sc: { id: number; estado: string }) =>
+  sc.estado === "ENVIADA" || sc.estado === "RECHAZADA" ? `P${folioSc(sc.id)}` : folioSc(sc.id);
+
+export const TIPOS_SC: Record<TipoSc, string> = {
+  INVENTARIO: "Repuestos con código (de inventario)",
+  SIN_CODIGO: "Repuestos o consumibles sin código de inventario",
+  SERVICIO: "Servicios",
+};
+export const ORIGENES_SC: Record<OrigenSc, string> = {
+  OT: "Repuesto pedido en una orden de trabajo",
+  STOCK_MINIMO: "Automática por stock mínimo",
+  MANUAL: "Creada a mano",
+};
+export const TIPOS_OC: Record<TipoOc, string> = { NACIONAL: "Nacional", IMPORTACION: "Importación" };
+export const INCOTERMS = ["EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"];
+export const VIAS_EMBARQUE = ["Marítima", "Aérea", "Terrestre", "Courier"];
 
 export function gestionaCompras(actor: UsuarioSesion): boolean {
   return actor.perfil === "ABASTECIMIENTO" || actor.perfil === "ADMINISTRADOR";
@@ -93,6 +115,15 @@ export function puedePedirCompra(actor: UsuarioSesion): boolean {
 /** Visan las solicitudes de compra el planificador o el jefe (y el administrador). */
 export function visaCompras(actor: UsuarioSesion): boolean {
   return actor.perfil === "JEFE_PLANIFICADOR" || actor.perfil === "ADMINISTRADOR";
+}
+
+/**
+ * Quién aprueba una presolicitud: la que nace sola por stock mínimo, el encargado de bodega; las
+ * demás, el jefe de mantenimiento o el planificador. El administrador, todas.
+ */
+export function apruebaPsc(actor: UsuarioSesion, origen: OrigenSc): boolean {
+  if (actor.perfil === "ADMINISTRADOR") return true;
+  return origen === "STOCK_MINIMO" ? actor.perfil === "BODEGUERO" : actor.perfil === "JEFE_PLANIFICADOR";
 }
 
 function exigirGestion(actor: UsuarioSesion) {
@@ -214,7 +245,7 @@ export async function guardarProveedor(db: DB, actor: UsuarioSesion, d: DatosPro
 
 export type LineaPedida = { repuestoId?: number | null; descripcion?: string | null; cantidad: number };
 
-async function limpiarLineas(tx: DB, lineas: LineaPedida[]) {
+async function limpiarLineas(tx: DB, lineas: LineaPedida[], tipo: TipoSc) {
   if (lineas.length === 0) throw new ErrorDeNegocio("Agrega al menos una línea.");
   const limpias = [];
   for (const [i, l] of lineas.entries()) {
@@ -228,7 +259,14 @@ async function limpiarLineas(tx: DB, lineas: LineaPedida[]) {
       descripcion = `${r.codigo} · ${r.descripcion}`;
     }
     if (!descripcion) throw new ErrorDeNegocio(`Línea ${i + 1}: falta la descripción.`);
+    if (tipo !== "INVENTARIO" && l.repuestoId) {
+      throw new ErrorDeNegocio(`Línea ${i + 1}: «${descripcion}» es un repuesto del catálogo. Pídelo en una solicitud de tipo «${TIPOS_SC.INVENTARIO}».`);
+    }
     limpias.push({ repuestoId: l.repuestoId ?? null, descripcion, cantidad: l.cantidad });
+  }
+  // Una solicitud de inventario puede llevar líneas anexas sin código (un flete, un embalaje), pero al menos un repuesto del catálogo.
+  if (tipo === "INVENTARIO" && !limpias.some((l) => l.repuestoId)) {
+    throw new ErrorDeNegocio("Ninguna línea es un repuesto del catálogo: elígelo de las sugerencias o cambia el tipo de solicitud.");
   }
   return limpias;
 }
@@ -241,23 +279,30 @@ async function exigirCatalogo(tx: DB, tabla: Catalogo, id: number | null | undef
 }
 
 /**
- * Crea una SC. La visa el planificador o el jefe; si la crea uno de ellos (o el administrador),
- * nace visada y pasa directo a abastecimiento. Cuenta contable y centro de costo son opcionales aquí.
+ * Crea una presolicitud de compra. La aprueba el planificador o el jefe; si la crea uno de ellos (o el
+ * administrador), nace aprobada como SC y pasa directo a abastecimiento. La automática por stock mínimo
+ * siempre espera la aprobación del encargado de bodega. Cuenta contable y centro de costo son opcionales aquí.
+ * Sin `tipo`, se deduce: con algún repuesto del catálogo → inventario; con ninguno → sin código.
  */
 export async function crearSc(
   db: DB,
   actor: UsuarioSesion,
-  d: { lineas: LineaPedida[]; centroCostoId?: number | null; cuentaId?: number | null; nota?: string | null },
+  d: { lineas: LineaPedida[]; tipo?: TipoSc; origen?: OrigenSc; centroCostoId?: number | null; cuentaId?: number | null; nota?: string | null },
 ): Promise<number> {
   if (!puedePedirCompra(actor)) throw new ErrorDeNegocio("Tu perfil no puede crear solicitudes de compra.");
+  const origen = d.origen ?? "MANUAL";
+  const tipo = d.tipo ?? (d.lineas.some((l) => l.repuestoId) ? "INVENTARIO" : "SIN_CODIGO");
+  if (!(tipo in TIPOS_SC)) throw new ErrorDeNegocio("Elige el tipo de solicitud de compra.");
   return db.transaction(async (tx) => {
     const t = tx as unknown as DB;
-    const lineas = await limpiarLineas(t, d.lineas);
-    const visada = visaCompras(actor);
+    const lineas = await limpiarLineas(t, d.lineas, tipo);
+    const visada = origen !== "STOCK_MINIMO" && apruebaPsc(actor, origen);
     const [sc] = await tx
       .insert(solicitudesCompra)
       .values({
         solicitanteId: actor.id,
+        tipo,
+        origen,
         centroCostoId: await exigirCatalogo(t, centrosCosto, d.centroCostoId, "un centro de costo"),
         cuentaId: await exigirCatalogo(t, cuentasContables, d.cuentaId, "una cuenta contable"),
         nota: d.nota?.trim() || null,
@@ -266,17 +311,30 @@ export async function crearSc(
       .returning({ id: solicitudesCompra.id });
     await tx.insert(lineasSc).values(lineas.map((l) => ({ ...l, scId: sc.id })));
     if (visada) {
-      await notificar(tx, await idsPorPerfil(tx, "ABASTECIMIENTO"), `Solicitud de compra ${folioSc(sc.id)} visada: lista para cotizar`, `/compras/sc/${sc.id}`);
+      await notificar(tx, await idsPorPerfil(tx, "ABASTECIMIENTO"), `Solicitud de compra ${folioSc(sc.id)} aprobada: lista para cotizar`, `/compras/sc/${sc.id}`);
+    } else if (origen === "STOCK_MINIMO") {
+      await notificar(tx, await idsPorPerfil(tx, "BODEGUERO"), `Presolicitud automática P${folioSc(sc.id)} por stock mínimo: falta tu aprobación`, `/compras/sc/${sc.id}`);
     } else {
-      await notificar(tx, await idsPorPerfil(tx, "JEFE_PLANIFICADOR"), `Solicitud de compra ${folioSc(sc.id)} de ${actor.nombre} por visar`, `/compras/sc/${sc.id}`);
+      await notificar(tx, await idsPorPerfil(tx, "JEFE_PLANIFICADOR"), `Presolicitud de compra P${folioSc(sc.id)} de ${actor.nombre} por aprobar`, `/compras/sc/${sc.id}`);
     }
     return sc.id;
   });
 }
 
-/** El planificador o el jefe visa (o rechaza) una SC. Visada, queda liberada para abastecimiento. */
+/**
+ * Aprueba (o rechaza) una presolicitud: el planificador o el jefe; la automática por stock mínimo, el
+ * encargado de bodega. Aprobada, es la solicitud de compra y queda liberada para abastecimiento.
+ */
 export async function resolverSc(db: DB, actor: UsuarioSesion, id: number, aprobar: boolean, motivo?: string): Promise<void> {
-  if (!visaCompras(actor)) throw new ErrorDeNegocio("Las solicitudes de compra las visa el planificador o el jefe.");
+  const [sc] = await db.select({ origen: solicitudesCompra.origen }).from(solicitudesCompra).where(eq(solicitudesCompra.id, id));
+  if (!sc) throw new ErrorDeNegocio("La solicitud de compra no existe.");
+  if (!apruebaPsc(actor, sc.origen)) {
+    throw new ErrorDeNegocio(
+      sc.origen === "STOCK_MINIMO"
+        ? "La presolicitud automática por stock mínimo la aprueba el encargado de bodega."
+        : "Las presolicitudes de compra las aprueba el planificador o el jefe.",
+    );
+  }
   if (!aprobar && !motivo?.trim()) throw new ErrorDeNegocio("Indica el motivo del rechazo.");
   const cambiadas = await db
     .update(solicitudesCompra)
@@ -287,11 +345,11 @@ export async function resolverSc(db: DB, actor: UsuarioSesion, id: number, aprob
   await notificar(
     db,
     [cambiadas[0].solicitanteId],
-    `Solicitud de compra ${folioSc(id)} ${aprobar ? "visada" : `rechazada: ${motivo!.trim()}`}`,
+    aprobar ? `Presolicitud aprobada: ahora es la solicitud de compra ${folioSc(id)}` : `Presolicitud P${folioSc(id)} rechazada: ${motivo!.trim()}`,
     `/compras/sc/${id}`,
   );
   if (aprobar) {
-    await notificar(db, await idsPorPerfil(db, "ABASTECIMIENTO"), `Solicitud de compra ${folioSc(id)} visada: lista para cotizar`, `/compras/sc/${id}`);
+    await notificar(db, await idsPorPerfil(db, "ABASTECIMIENTO"), `Solicitud de compra ${folioSc(id)} aprobada: lista para cotizar`, `/compras/sc/${id}`);
   }
 }
 
@@ -330,7 +388,7 @@ export async function cerrarSc(db: DB, actor: UsuarioSesion, id: number): Promis
  * Propuesta de compra: repuestos vigentes bajo su stock mínimo. Sugiere comprar hasta el máximo
  * (o hasta el mínimo, si no hay máximo), descontando lo que ya viene en camino.
  */
-export async function propuestaDeCompra(db: DB) {
+export async function propuestaDeCompra(db: DB, repuestoId?: number) {
   const filas = await db
     .select({
       id: repuestos.id,
@@ -339,14 +397,14 @@ export async function propuestaDeCompra(db: DB) {
       unidad: repuestos.unidad,
       stockMinimo: repuestos.stockMinimo,
       stockMaximo: repuestos.stockMaximo,
-      total: sql<number>`coalesce((select sum(e.cantidad) from existencias e where e.repuesto_id = repuestos.id), 0)`.mapWith(Number),
-      // Pendiente de recibir en órdenes de compra vigentes.
-      enOc: sql<number>`coalesce((select sum(l.cantidad - l.recibida) from lineas_oc l join ordenes_compra o on o.id = l.oc_id where l.repuesto_id = repuestos.id and o.estado in ('EMITIDA','AUTORIZADA','RECIBIDA_PARCIAL')), 0)`.mapWith(Number),
+      total: sql<number>`coalesce((select sum(e.cantidad) from existencias e join almacenes a on a.id = e.almacen_id where e.repuesto_id = repuestos.id and not a.es_capex), 0)`.mapWith(Number),
+      // Pendiente de recibir en órdenes de compra vigentes. El saldo de una orden cerrada ya no viene en camino.
+      enOc: sql<number>`coalesce((select sum(l.cantidad - l.recibida) from lineas_oc l join ordenes_compra o on o.id = l.oc_id where l.repuesto_id = repuestos.id and o.estado in ('EMITIDA','AUTORIZADA','RECIBIDA_PARCIAL') and o.cerrada_en is null), 0)`.mapWith(Number),
       // Pedido en solicitudes de compra que todavía no son una orden.
       enSc: sql<number>`coalesce((select sum(l.cantidad) from lineas_sc l join solicitudes_compra s on s.id = l.sc_id where l.repuesto_id = repuestos.id and s.estado in ('ENVIADA','APROBADA') and not exists (select 1 from lineas_oc lo join ordenes_compra o on o.id = lo.oc_id where lo.linea_sc_id = l.id and o.estado in ('EMITIDA','AUTORIZADA','RECIBIDA_PARCIAL','RECIBIDA_TOTAL'))), 0)`.mapWith(Number),
     })
     .from(repuestos)
-    .where(and(eq(repuestos.activo, true), sql`${repuestos.stockMinimo} > 0`))
+    .where(and(eq(repuestos.activo, true), sql`${repuestos.stockMinimo} > 0`, repuestoId ? eq(repuestos.id, repuestoId) : undefined))
     .orderBy(repuestos.codigo);
   return filas
     .filter((f) => f.total < f.stockMinimo)
@@ -356,12 +414,86 @@ export async function propuestaDeCompra(db: DB) {
     });
 }
 
+/**
+ * Presolicitud automática: cuando un repuesto queda bajo su stock mínimo y lo que falta no viene en
+ * camino, el sistema lo agrega a la presolicitud automática abierta (o crea una). La aprueba el
+ * encargado de bodega. Devuelve el número de la presolicitud, o null si no hacía falta.
+ */
+export async function pscPorStockMinimo(db: DB, actor: UsuarioSesion, repuestoId: number): Promise<number | null> {
+  const [p] = await propuestaDeCompra(db, repuestoId);
+  if (!p || p.sugerida <= 0) return null;
+  const [abierta] = await db
+    .select({ id: solicitudesCompra.id })
+    .from(solicitudesCompra)
+    .where(and(eq(solicitudesCompra.origen, "STOCK_MINIMO"), eq(solicitudesCompra.estado, "ENVIADA")))
+    .orderBy(solicitudesCompra.id)
+    .limit(1)
+    .for("update");
+  if (!abierta) {
+    const [sc] = await db
+      .insert(solicitudesCompra)
+      .values({ solicitanteId: actor.id, tipo: "INVENTARIO", origen: "STOCK_MINIMO", nota: "Generada por el sistema: repuestos bajo el stock mínimo" })
+      .returning({ id: solicitudesCompra.id });
+    await db.insert(lineasSc).values({ scId: sc.id, repuestoId, descripcion: `${p.codigo} · ${p.descripcion}`, cantidad: p.sugerida });
+    await notificar(db, await idsPorPerfil(db, "BODEGUERO"), `Presolicitud automática P${folioSc(sc.id)} por stock mínimo: falta tu aprobación`, `/compras/sc/${sc.id}`);
+    return sc.id;
+  }
+  const [linea] = await db.select().from(lineasSc).where(and(eq(lineasSc.scId, abierta.id), eq(lineasSc.repuestoId, repuestoId)));
+  if (linea) await db.update(lineasSc).set({ cantidad: r2(linea.cantidad + p.sugerida) }).where(eq(lineasSc.id, linea.id));
+  else await db.insert(lineasSc).values({ scId: abierta.id, repuestoId, descripcion: `${p.codigo} · ${p.descripcion}`, cantidad: p.sugerida });
+  return abierta.id;
+}
+
+/**
+ * Proveedores sugeridos para las líneas pendientes de una SC, según el historial: a quién se le compró
+ * antes lo mismo (mismo repuesto, o misma descripción si no es de catálogo), cuántas veces y a qué precio.
+ */
+export async function proveedoresSugeridos(db: DB, scId: number) {
+  const r = await db.execute(sql`
+    SELECT ls.id AS linea, ls.descripcion, p.id AS proveedor_id, p.nombre AS proveedor, o.id AS oc, o.moneda, o.emitida_en, lo.precio_unitario
+    FROM lineas_sc ls
+    JOIN lineas_oc lo ON (ls.repuesto_id IS NOT NULL AND lo.repuesto_id = ls.repuesto_id)
+      OR (ls.repuesto_id IS NULL AND lo.repuesto_id IS NULL AND lower(lo.descripcion) = lower(ls.descripcion))
+    JOIN ordenes_compra o ON o.id = lo.oc_id AND o.estado IN ('AUTORIZADA', 'RECIBIDA_PARCIAL', 'RECIBIDA_TOTAL')
+    JOIN proveedores p ON p.id = o.proveedor_id AND p.activo
+    WHERE ls.sc_id = ${scId}
+    ORDER BY o.id DESC`);
+  const filas = (r as unknown as { rows: { linea: number; descripcion: string; proveedor_id: number; proveedor: string; oc: number; moneda: Moneda; emitida_en: Date; precio_unitario: string }[] }).rows;
+  const porClave = new Map<string, { lineaScId: number; descripcion: string; proveedorId: number; proveedor: string; compras: number; ultimaOc: number; ultimaFecha: Date; ultimoPrecio: number; moneda: Moneda }>();
+  for (const f of filas) {
+    const clave = `${f.linea}-${f.proveedor_id}`;
+    const previa = porClave.get(clave);
+    // Vienen de la más nueva a la más antigua: la primera de cada par es la última compra.
+    if (previa) previa.compras++;
+    else {
+      porClave.set(clave, {
+        lineaScId: Number(f.linea),
+        descripcion: f.descripcion,
+        proveedorId: Number(f.proveedor_id),
+        proveedor: f.proveedor,
+        compras: 1,
+        ultimaOc: Number(f.oc),
+        ultimaFecha: new Date(f.emitida_en),
+        ultimoPrecio: Number(f.precio_unitario),
+        moneda: f.moneda,
+      });
+    }
+  }
+  return [...porClave.values()].sort((a, b) => a.lineaScId - b.lineaScId || b.ultimaOc - a.ultimaOc);
+}
+
 // ---------- Orden de compra ----------
 
 export type DatosOc = {
   scId: number;
   proveedorId: number;
   moneda: Moneda;
+  /** Nacional si no se indica. La importación exige incoterm y vía de embarque. */
+  tipo?: TipoOc;
+  incoterm?: string | null;
+  viaEmbarque?: string | null;
+  /** Inversión: se recibe en la bodega Capex y no entra a la valorización del inventario. */
+  esCapex?: boolean;
   /** Obligatorios en la OC. Si no se indican, se toman de la SC. */
   cuentaId?: number | null;
   centroCostoId?: number | null;
@@ -383,6 +515,14 @@ export async function emitirOc(db: DB, actor: UsuarioSesion, d: DatosOc): Promis
   exigirGestion(actor);
   if (!(d.moneda in MONEDAS)) throw new ErrorDeNegocio("Elige la moneda.");
   if (d.fechaEntrega && !/^\d{4}-\d{2}-\d{2}$/.test(d.fechaEntrega)) throw new ErrorDeNegocio("La fecha de entrega no es válida.");
+  const tipo = d.tipo ?? "NACIONAL";
+  if (!(tipo in TIPOS_OC)) throw new ErrorDeNegocio("Elige si la orden es nacional o de importación.");
+  const incoterm = tipo === "IMPORTACION" ? (d.incoterm?.trim().toUpperCase() ?? "") : "";
+  const viaEmbarque = tipo === "IMPORTACION" ? (d.viaEmbarque?.trim() ?? "") : "";
+  if (tipo === "IMPORTACION") {
+    if (!INCOTERMS.includes(incoterm)) throw new ErrorDeNegocio("Una orden de importación necesita el incoterm.");
+    if (!VIAS_EMBARQUE.includes(viaEmbarque)) throw new ErrorDeNegocio("Una orden de importación necesita la vía de embarque.");
+  }
   return db.transaction(async (tx) => {
     const t = tx as unknown as DB;
     const [sc] = await tx.select().from(solicitudesCompra).where(eq(solicitudesCompra.id, d.scId)).for("update");
@@ -411,6 +551,10 @@ export async function emitirOc(db: DB, actor: UsuarioSesion, d: DatosOc): Promis
         scId: sc.id,
         proveedorId: prov.id,
         moneda: d.moneda,
+        tipo,
+        incoterm: incoterm || null,
+        viaEmbarque: viaEmbarque || null,
+        esCapex: d.esCapex ?? false,
         centroCostoId,
         cuentaId,
         ivaExento: d.ivaExento ?? false,
@@ -424,11 +568,8 @@ export async function emitirOc(db: DB, actor: UsuarioSesion, d: DatosOc): Promis
       .returning({ id: ordenesCompra.id });
     await tx.insert(lineasOc).values(lineas.map((l) => ({ ...l, ocId: oc.id })));
     await ajustarEstadoSc(t, sc.id);
-    const autorizan = await tx
-      .select({ id: usuarios.id })
-      .from(usuarios)
-      .where(and(eq(usuarios.puedeAutorizarOc, true), eq(usuarios.activo, true), inArray(usuarios.perfil, ["JEFE_PLANIFICADOR", "ADMINISTRADOR"])));
-    await notificar(tx, autorizan.map((u) => u.id), `Orden de compra ${folioOc(oc.id)} por autorizar: ${prov.nombre}`, `/compras/oc/${oc.id}`);
+    // La ruta de aprobación parte por el jefe de mantenimiento.
+    await notificar(tx, await idsPorCargo(t, "JEFE_MANTENIMIENTO"), `Orden de compra ${folioOc(oc.id)} por autorizar: ${prov.nombre}`, `/compras/oc/${oc.id}`);
     return oc.id;
   });
 }
@@ -453,6 +594,17 @@ async function ocParaCambiar(tx: Parameters<Parameters<DB["transaction"]>[0]>[0]
   return oc;
 }
 
+/** Personas vigentes que firman con un cargo de la ruta de aprobación. */
+async function idsPorCargo(db: DB, rol: RolAutorizacion): Promise<number[]> {
+  const filas = await db.select().from(usuarios).where(and(eq(usuarios.puedeAutorizarOc, true), eq(usuarios.activo, true)));
+  return filas.filter((u) => rolDe(u) === rol).map((u) => u.id);
+}
+
+async function esDeServicio(db: DB, scId: number): Promise<boolean> {
+  const [sc] = await db.select({ tipo: solicitudesCompra.tipo }).from(solicitudesCompra).where(eq(solicitudesCompra.id, scId));
+  return sc?.tipo === "SERVICIO";
+}
+
 async function exigirAutorizador(db: DB, actor: UsuarioSesion): Promise<RolAutorizacion> {
   const [u] = await db.select().from(usuarios).where(eq(usuarios.id, actor.id));
   const rol = u?.activo ? rolDe(u) : null;
@@ -461,9 +613,10 @@ async function exigirAutorizador(db: DB, actor: UsuarioSesion): Promise<RolAutor
 }
 
 /**
- * Autoriza una OC. Son obligatorias dos firmas: jefe de mantenimiento y gerente de producción; al
- * completarse, la OC queda autorizada y recibe su código de verificación. La firma del gerente
- * general es opcional: puede darla antes o después, y no cambia el estado.
+ * Autoriza una OC siguiendo la ruta de aprobación, en orden: jefe de mantenimiento → gerente de
+ * producción → gerente general. Las dos primeras firmas son obligatorias; al completarse, la OC queda
+ * autorizada y recibe su código de verificación. La del gerente general es opcional, va después de
+ * las otras dos y no cambia el estado.
  */
 export async function autorizarOc(db: DB, actor: UsuarioSesion, id: number): Promise<{ completa: boolean }> {
   const rol = await exigirAutorizador(db, actor);
@@ -478,6 +631,12 @@ export async function autorizarOc(db: DB, actor: UsuarioSesion, id: number): Pro
       throw new ErrorDeNegocio(`Ya está la autorización de ${ROLES_AUTORIZACION[rol].toLowerCase()}.`);
     }
     if (previas.some((a) => a.usuarioId === actor.id)) throw new ErrorDeNegocio("Ya firmaste esta orden con otro cargo.");
+    if (rol === "GERENTE_PRODUCCION" && !previas.some((a) => a.rol === "JEFE_MANTENIMIENTO")) {
+      throw new ErrorDeNegocio("Ruta de aprobación: primero debe autorizar el jefe de mantenimiento.");
+    }
+    if (rol === "GERENTE_GENERAL" && !previas.some((a) => a.rol === "GERENTE_PRODUCCION")) {
+      throw new ErrorDeNegocio("Ruta de aprobación: primero deben autorizar el jefe de mantenimiento y el gerente de producción.");
+    }
     await tx.insert(autorizacionesOc).values({ ocId: id, rol, usuarioId: actor.id, nombre: actor.nombre });
     const roles = [...previas.map((a) => a.rol), rol];
     const completa = oc.estado === "EMITIDA" && ROLES_OBLIGATORIOS.every((r) => roles.includes(r));
@@ -490,6 +649,18 @@ export async function autorizarOc(db: DB, actor: UsuarioSesion, id: number): Pro
         `Orden de compra ${folioOc(id)} autorizada`,
         `/compras/oc/${id}`,
       );
+      await notificar(tx, await idsPorCargo(tx as unknown as DB, "GERENTE_GENERAL"), `Orden de compra ${folioOc(id)} autorizada: tu firma como gerente general es opcional`, `/compras/oc/${id}`);
+      if (await esDeServicio(tx as unknown as DB, oc.scId)) {
+        const [sc] = await tx.select({ solicitanteId: solicitudesCompra.solicitanteId }).from(solicitudesCompra).where(eq(solicitudesCompra.id, oc.scId));
+        await notificar(
+          tx,
+          [sc.solicitanteId, ...(await idsPorPerfil(tx, "JEFE_PLANIFICADOR"))],
+          `Orden de servicio ${folioOc(id)} autorizada: cuando llegue la factura del proveedor, el jefe de área debe firmarla en el sistema`,
+          `/compras/oc/${id}`,
+        );
+      }
+    } else if (rol === "JEFE_MANTENIMIENTO") {
+      await notificar(tx, await idsPorCargo(tx as unknown as DB, "GERENTE_PRODUCCION"), `Orden de compra ${folioOc(id)} por autorizar: ya firmó el jefe de mantenimiento`, `/compras/oc/${id}`);
     }
     return { completa };
   });
@@ -541,9 +712,14 @@ export async function recibirOc(db: DB, actor: UsuarioSesion, d: DatosRecepcion)
   return db.transaction(async (tx) => {
     const oc = await ocParaCambiar(tx, d.ocId);
     if (oc.estado === "EMITIDA") throw new ErrorDeNegocio("La orden de compra no está autorizada: no admite recepciones.");
-    if (oc.estado !== "AUTORIZADA" && oc.estado !== "RECIBIDA_PARCIAL") throw new ErrorDeNegocio("Esta orden de compra no admite recepciones.");
+    if (oc.cerradaEn || (oc.estado !== "AUTORIZADA" && oc.estado !== "RECIBIDA_PARCIAL")) throw new ErrorDeNegocio("Esta orden de compra no admite recepciones.");
+    if (await esDeServicio(tx as unknown as DB, oc.scId)) {
+      throw new ErrorDeNegocio("Una orden de servicio no se recibe en bodega: el jefe de área firma la factura del proveedor.");
+    }
     const [almacen] = await tx.select().from(almacenes).where(eq(almacenes.id, d.almacenId));
     if (!almacen || !almacen.activo) throw new ErrorDeNegocio("Elige el almacén que recibe.");
+    if (oc.esCapex && !almacen.esCapex) throw new ErrorDeNegocio("Esta orden es Capex: se recibe en la bodega Capex, que no entra a la valorización del inventario.");
+    if (!oc.esCapex && almacen.esCapex) throw new ErrorDeNegocio("La bodega Capex solo recibe órdenes de compra Capex.");
     let tipoCambio = 1;
     if (oc.moneda !== "CLP") {
       if (!d.tipoCambio || !Number.isFinite(d.tipoCambio) || d.tipoCambio <= 0) {
@@ -585,10 +761,70 @@ export async function recibirOc(db: DB, actor: UsuarioSesion, d: DatosRecepcion)
     const [sc] = await tx.select({ solicitanteId: solicitudesCompra.solicitanteId }).from(solicitudesCompra).where(eq(solicitudesCompra.id, oc.scId));
     await notificar(
       tx,
-      [oc.emitidaPor, sc.solicitanteId].filter((u) => u !== actor.id),
-      `Orden de compra ${folioOc(oc.id)}: recepción ${total ? "total" : "parcial"} en ${almacen.nombre}`,
+      [...new Set([oc.emitidaPor, sc.solicitanteId, ...(await idsPorPerfil(tx, "ABASTECIMIENTO"))])].filter((u) => u !== actor.id),
+      `Orden de compra ${folioOc(oc.id)}: recepción ${total ? "total" : "parcial"} en ${almacen.nombre}${total ? ". Lista para cerrar." : ""}`,
       `/compras/oc/${oc.id}`,
     );
     return rec.id;
+  });
+}
+
+/** Abastecimiento deja registrado que envió la OC autorizada al proveedor. */
+export async function marcarEnviadaOc(db: DB, actor: UsuarioSesion, id: number): Promise<void> {
+  exigirGestion(actor);
+  await db.transaction(async (tx) => {
+    const oc = await ocParaCambiar(tx, id);
+    if (oc.estado === "EMITIDA") throw new ErrorDeNegocio("La orden todavía no completa su ruta de aprobación: no se puede enviar al proveedor.");
+    if (oc.estado !== "AUTORIZADA" && oc.estado !== "RECIBIDA_PARCIAL" && oc.estado !== "RECIBIDA_TOTAL") throw new ErrorDeNegocio("Esta orden no está vigente.");
+    if (oc.enviadaEn) throw new ErrorDeNegocio("La orden ya figura enviada al proveedor.");
+    await tx.update(ordenesCompra).set({ enviadaEn: new Date() }).where(eq(ordenesCompra.id, id));
+  });
+}
+
+/**
+ * OC de servicio: no hay ingreso a bodega. El jefe de área firma la factura del proveedor (conformidad
+ * del servicio) y la orden queda pendiente de cierre para abastecimiento.
+ */
+export async function conformarServicio(db: DB, actor: UsuarioSesion, id: number, factura: string): Promise<void> {
+  if (!visaCompras(actor)) throw new ErrorDeNegocio("La factura de un servicio la firma el jefe de área.");
+  const numero = factura.trim();
+  if (!numero) throw new ErrorDeNegocio("Escribe el número de la factura del proveedor.");
+  await db.transaction(async (tx) => {
+    const oc = await ocParaCambiar(tx, id);
+    if (!(await esDeServicio(tx as unknown as DB, oc.scId))) throw new ErrorDeNegocio("Esta orden no es de servicio: se recibe en bodega.");
+    if (oc.estado === "EMITIDA") throw new ErrorDeNegocio("La orden de compra todavía no está autorizada.");
+    if (oc.estado !== "AUTORIZADA" || oc.cerradaEn) throw new ErrorDeNegocio("La factura de esta orden ya fue firmada, o la orden no está vigente.");
+    await tx.update(lineasOc).set({ recibida: sql`${lineasOc.cantidad}` }).where(eq(lineasOc.ocId, id));
+    await tx.update(ordenesCompra).set({ estado: "RECIBIDA_TOTAL", facturaServicio: numero, conformePor: actor.id, conformeEn: new Date() }).where(eq(ordenesCompra.id, id));
+    const [sc] = await tx.select({ solicitanteId: solicitudesCompra.solicitanteId }).from(solicitudesCompra).where(eq(solicitudesCompra.id, oc.scId));
+    await notificar(
+      tx,
+      [...new Set([oc.emitidaPor, sc.solicitanteId, ...(await idsPorPerfil(tx, "ABASTECIMIENTO"))])].filter((u) => u !== actor.id),
+      `Orden de servicio ${folioOc(id)}: ${actor.nombre} firmó la factura ${numero}. Pendiente de cierre.`,
+      `/compras/oc/${id}`,
+    );
+  });
+}
+
+/**
+ * Abastecimiento cierra la orden: con todo recibido (o la factura del servicio firmada), o con una
+ * recepción parcial si explica por qué el saldo ya no llegará. Cerrada, no admite más recepciones.
+ */
+export async function cerrarOc(db: DB, actor: UsuarioSesion, id: number, nota?: string | null): Promise<void> {
+  exigirGestion(actor);
+  await db.transaction(async (tx) => {
+    const oc = await ocParaCambiar(tx, id);
+    if (oc.cerradaEn) throw new ErrorDeNegocio("La orden de compra ya está cerrada.");
+    if (oc.estado !== "RECIBIDA_TOTAL" && oc.estado !== "RECIBIDA_PARCIAL") {
+      throw new ErrorDeNegocio(
+        (await esDeServicio(tx as unknown as DB, oc.scId))
+          ? "Para cerrar una orden de servicio, antes el jefe de área debe firmar la factura del proveedor."
+          : "Para cerrar la orden, antes bodega debe registrar la recepción.",
+      );
+    }
+    if (oc.estado === "RECIBIDA_PARCIAL" && !nota?.trim()) throw new ErrorDeNegocio("La orden tiene saldo por recibir: explica por qué se cierra así.");
+    await tx.update(ordenesCompra).set({ cerradaEn: new Date(), cerradaPor: actor.id, notaCierre: nota?.trim() || null }).where(eq(ordenesCompra.id, id));
+    const [sc] = await tx.select({ solicitanteId: solicitudesCompra.solicitanteId }).from(solicitudesCompra).where(eq(solicitudesCompra.id, oc.scId));
+    await notificar(tx, [sc.solicitanteId].filter((u) => u !== actor.id), `Orden de compra ${folioOc(id)} cerrada`, `/compras/oc/${id}`);
   });
 }

@@ -20,7 +20,7 @@ import {
 } from "@/db/schema";
 import type { UsuarioSesion } from "./auth-core";
 import { cargar, type Columna, type Fila, normalizar } from "./carga-core";
-import { crearSc, folioSc } from "./compras-core";
+import { crearSc, folioSc, pscPorStockMinimo } from "./compras-core";
 import { idsPorPerfil, notificar } from "./notificar";
 import { ErrorDeNegocio } from "./usuarios-core";
 
@@ -195,14 +195,18 @@ export async function actualizarRepuesto(
 
 type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];
 
-/** Bloquea el repuesto mientras dura la operación y devuelve sus datos y el total en todos los almacenes. */
+/**
+ * Bloquea el repuesto mientras dura la operación y devuelve sus datos y el total del inventario
+ * (todos los almacenes menos la bodega Capex, que se lleva aparte).
+ */
 async function tomarRepuesto(tx: Tx, repuestoId: number) {
   const [r] = await tx.select().from(repuestos).where(eq(repuestos.id, repuestoId)).for("update");
   if (!r) throw new ErrorDeNegocio("El repuesto no existe en el catálogo.");
   const [{ total }] = await tx
     .select({ total: sql<number>`coalesce(sum(${existencias.cantidad}), 0)`.mapWith(Number) })
     .from(existencias)
-    .where(eq(existencias.repuestoId, repuestoId));
+    .innerJoin(almacenes, eq(almacenes.id, existencias.almacenId))
+    .where(and(eq(existencias.repuestoId, repuestoId), eq(almacenes.esCapex, false)));
   return { r, total };
 }
 
@@ -234,14 +238,26 @@ async function variar(tx: Tx, repuestoId: number, almacenId: number, delta: numb
     .onConflictDoUpdate({ target: [existencias.repuestoId, existencias.almacenId], set: { cantidad: queda } });
 }
 
-/** Avisa a bodega y abastecimiento cuando un repuesto cruza hacia abajo su stock mínimo. */
+/**
+ * Tras un movimiento que baja existencias: avisa a bodega y abastecimiento cuando el repuesto cruza
+ * hacia abajo su stock mínimo y, si lo que falta no viene en camino, lo agrega a la presolicitud de
+ * compra automática. La bodega Capex no cuenta para el mínimo.
+ */
 async function avisarSiBajoMinimo(
   tx: Tx,
+  actor: UsuarioSesion,
   r: { id: number; codigo: string; descripcion: string; stockMinimo: number; unidad: string },
   antes: number,
-  despues: number,
 ) {
-  if (r.stockMinimo > 0 && antes >= r.stockMinimo && despues < r.stockMinimo) {
+  if (r.stockMinimo <= 0) return;
+  const [{ despues }] = await tx
+    .select({ despues: sql<number>`coalesce(sum(${existencias.cantidad}), 0)`.mapWith(Number) })
+    .from(existencias)
+    .innerJoin(almacenes, eq(almacenes.id, existencias.almacenId))
+    .where(and(eq(existencias.repuestoId, r.id), eq(almacenes.esCapex, false)));
+  if (despues >= r.stockMinimo) return;
+  await pscPorStockMinimo(tx as unknown as DB, actor, r.id);
+  if (antes >= r.stockMinimo) {
     await notificar(
       tx,
       await idsPorPerfil(tx, "BODEGUERO", "ABASTECIMIENTO"),
@@ -270,10 +286,13 @@ export async function registrarEntrada(db: DB, actor: UsuarioSesion, d: DatosEnt
   return db.transaction(async (tx) => {
     const { r, total } = await tomarRepuesto(tx, d.repuestoId);
     if (!r.activo) throw new ErrorDeNegocio("El repuesto está dado de baja.");
-    await exigirAlmacen(tx, d.almacenId);
+    const almacen = await exigirAlmacen(tx, d.almacenId);
     await variar(tx, r.id, d.almacenId, cantidad, r.unidad);
     const costoEntrada = costo ?? r.costoMedio;
-    await tx.update(repuestos).set({ costoMedio: precioMedio(total, r.costoMedio, cantidad, costoEntrada) }).where(eq(repuestos.id, r.id));
+    // Lo que entra a la bodega Capex guarda su costo en el movimiento, pero no mueve el costo medio del inventario.
+    if (!almacen.esCapex) {
+      await tx.update(repuestos).set({ costoMedio: precioMedio(total, r.costoMedio, cantidad, costoEntrada) }).where(eq(repuestos.id, r.id));
+    }
     const [m] = await tx
       .insert(movimientos)
       .values({
@@ -329,7 +348,7 @@ async function salida(tx: Tx, actor: UsuarioSesion, d: DatosSalida): Promise<num
       nota: d.nota?.trim() || null,
     })
     .returning({ id: movimientos.id });
-  await avisarSiBajoMinimo(tx, r, total, r2(total - cantidad));
+  await avisarSiBajoMinimo(tx, actor, r, total);
   return m.id;
 }
 
@@ -350,6 +369,7 @@ async function pedirResto(tx: Tx, actor: UsuarioSesion, s: typeof solicitudesRep
     .leftJoin(ordenesTrabajo, eq(ordenesTrabajo.id, solicitudesRepuesto.otId))
     .where(eq(solicitudesRepuesto.id, s.id));
   const scId = await crearSc(tx as unknown as DB, actor, {
+    origen: "OT",
     lineas: [{ repuestoId, descripcion: [s.descripcion, s.codigoFabricante].filter(Boolean).join(" · "), cantidad: falta }],
     centroCostoId: origen.centroCostoId,
     nota: `Para ${origen.activo}${origen.folio ? ` · OT ${origen.folio}` : ""} · pidió ${origen.solicitante}`,
@@ -522,7 +542,7 @@ export async function registrarAjuste(
       .insert(movimientos)
       .values({ tipo: "AJUSTE", repuestoId: r.id, almacenId: d.almacenId, cantidad: delta, costoUnitario: r.costoMedio, usuarioId: actor.id, nota })
       .returning({ id: movimientos.id });
-    await avisarSiBajoMinimo(tx, r, total, r2(total + delta));
+    await avisarSiBajoMinimo(tx, actor, r, total);
     return m.id;
   });
 }
@@ -636,7 +656,7 @@ export async function cerrarToma(db: DB, actor: UsuarioSesion, tomaId: number): 
         tomaId,
         nota: `Inventario N.º ${tomaId}`,
       });
-      await avisarSiBajoMinimo(tx, r, total, r2(total + delta));
+      await avisarSiBajoMinimo(tx, actor, r, total);
       ajustes++;
     }
     await tx.update(tomasInventario).set({ estado: "CERRADA", cerradaPor: actor.id, cerradaEn: new Date() }).where(eq(tomasInventario.id, tomaId));

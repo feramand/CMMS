@@ -4,7 +4,7 @@ import { MenuCompras } from "@/componentes/compras";
 import { Encabezado } from "@/componentes/encabezado";
 import { AvisoError, botonPrimario, campo, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { propuestaDeCompra, visaCompras } from "@/lib/compras-core";
+import { propuestaDeCompra, TIPOS_SC, visaCompras } from "@/lib/compras-core";
 import { listarExistencias } from "@/lib/consultas-bodega";
 import { listarCentros, listarCuentas } from "@/lib/consultas-compras";
 import { exigirPerfil } from "@/lib/dal";
@@ -23,7 +23,7 @@ export default async function NuevaSc({ searchParams }: { searchParams: Promise<
     <>
       <Encabezado usuario={usuario} />
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 p-4">
-        <h1 className="text-2xl font-bold">Nueva solicitud de compra</h1>
+        <h1 className="text-2xl font-bold">Nueva presolicitud de compra</h1>
         <MenuCompras actual="/compras/sc/nueva" />
         <AvisoError mensaje={error} />
         {propuesta ? (
@@ -38,9 +38,20 @@ export default async function NuevaSc({ searchParams }: { searchParams: Promise<
           </Link>
         )}
         <form action={accionCrearSc} className={`${tarjeta} flex flex-col gap-3`}>
+          <label className="flex flex-col gap-1 text-sm font-semibold">
+            Tipo de solicitud
+            <select name="tipo" required defaultValue="INVENTARIO" className={campo}>
+              {Object.entries(TIPOS_SC).map(([valor, nombre]) => (
+                <option key={valor} value={valor}>
+                  {nombre}
+                </option>
+              ))}
+            </select>
+          </label>
           <p className="text-sm text-slate-600">
-            Al escribir aparecen los repuestos del catálogo. Si lo que necesitas no es un repuesto de bodega (un servicio, un
-            insumo), descríbelo con tus palabras. Las filas vacías se ignoran.
+            Con código de inventario: elige los repuestos de las sugerencias que aparecen al escribir (puedes agregar una línea
+            anexa escrita a mano, como un flete). Sin código o servicios: describe lo que necesitas con tus palabras; ahí no van
+            repuestos del catálogo. Las filas vacías se ignoran.
           </p>
           <div className="grid grid-cols-[1fr_7rem] gap-2 text-sm font-semibold">
             <span>Qué comprar</span>
@@ -91,7 +102,7 @@ export default async function NuevaSc({ searchParams }: { searchParams: Promise<
             <input name="nota" className={campo} />
           </label>
           <button type="submit" className={botonPrimario}>
-            {visaCompras(usuario) ? "Crear solicitud (queda visada y pasa a abastecimiento)" : "Enviar para visar"}
+            {visaCompras(usuario) ? "Crear solicitud (queda aprobada y pasa a abastecimiento)" : "Enviar presolicitud para aprobar"}
           </button>
         </form>
       </main>

@@ -31,7 +31,10 @@ export type FilaExistencia = {
   stockMaximo: number | null;
   costoMedio: number;
   activo: boolean;
+  /** Existencia del inventario: todos los almacenes menos la bodega Capex. */
   total: number;
+  /** Lo guardado en la bodega Capex: no entra al total ni a la valorización. */
+  capex: number;
   porAlmacen: Record<number, { cantidad: number; ubicacion: string | null }>;
 };
 
@@ -47,12 +50,18 @@ export async function listarExistencias(opciones: { texto?: string; ids?: number
   }
   const lista = await db.select().from(repuestos).where(and(...filtros)).orderBy(asc(repuestos.codigo));
   if (lista.length === 0) return [];
-  const ex = await db.select().from(existencias).where(inArray(existencias.repuestoId, lista.map((r) => r.id)));
+  const [ex, bodegasCapex] = await Promise.all([
+    db.select().from(existencias).where(inArray(existencias.repuestoId, lista.map((r) => r.id))),
+    db.select({ id: almacenes.id }).from(almacenes).where(eq(almacenes.esCapex, true)),
+  ]);
+  const esCapex = new Set(bodegasCapex.map((a) => a.id));
+  const suma = (filas: typeof ex) => Math.round(filas.reduce((s, e) => s + e.cantidad, 0) * 100) / 100;
   return lista.map((r) => {
     const propias = ex.filter((e) => e.repuestoId === r.id);
     return {
       ...r,
-      total: Math.round(propias.reduce((s, e) => s + e.cantidad, 0) * 100) / 100,
+      total: suma(propias.filter((e) => !esCapex.has(e.almacenId))),
+      capex: suma(propias.filter((e) => esCapex.has(e.almacenId))),
       porAlmacen: Object.fromEntries(propias.map((e) => [e.almacenId, { cantidad: e.cantidad, ubicacion: e.ubicacion }])),
     };
   });

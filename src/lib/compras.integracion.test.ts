@@ -15,7 +15,12 @@ import {
   emitirOc,
   fijarAutorizador,
   cambiarImputacionOc,
+  cerrarOc,
   cerrarSc,
+  conformarServicio,
+  folioDe,
+  marcarEnviadaOc,
+  proveedoresSugeridos,
   guardarCentro,
   guardarCuenta,
   guardarProveedor,
@@ -108,13 +113,13 @@ describe.skipIf(!url)("compras (integración)", () => {
     await expect(crearSc(db, bodeguero, { lineas: [{ descripcion: " ", cantidad: 1 }] })).rejects.toThrow("falta la descripción");
     const sc = await crearSc(db, bodeguero, { lineas: [{ repuestoId: rod, cantidad: 8 }, { descripcion: "Servicio de rectificado", cantidad: 1 }] });
     expect((await lineasDeSc(sc)).map((l) => l.descripcion)).toEqual(["ROD-6204 · Rodamiento 6204", "Servicio de rectificado"]);
-    expect(await avisos(planificador.id)).toEqual(["Solicitud de compra SC-00001 de Bodeguero por visar"]);
+    expect(await avisos(planificador.id)).toEqual(["Presolicitud de compra PSC-00001 de Bodeguero por aprobar"]);
     expect(await avisos(compras.id)).toEqual([]);
-    await expect(resolverSc(db, compras, sc, true)).rejects.toThrow("las visa el planificador o el jefe");
-    await expect(resolverSc(db, bodeguero, sc, true)).rejects.toThrow("las visa el planificador o el jefe");
+    await expect(resolverSc(db, compras, sc, true)).rejects.toThrow("las aprueba el planificador o el jefe");
+    await expect(resolverSc(db, bodeguero, sc, true)).rejects.toThrow("las aprueba el planificador o el jefe");
     await expect(resolverSc(db, planificador, sc, false, "")).rejects.toThrow("motivo");
     await resolverSc(db, planificador, sc, false, "Hay stock en pañol");
-    expect(await avisos(bodeguero.id)).toEqual(["Solicitud de compra SC-00001 rechazada: Hay stock en pañol"]);
+    expect(await avisos(bodeguero.id)).toEqual(["Presolicitud PSC-00001 rechazada: Hay stock en pañol"]);
     await expect(resolverSc(db, planificador, sc, true)).rejects.toThrow("ya fue resuelta");
     // La de abastecimiento también necesita el visto bueno; al visarla se libera y se avisa a abastecimiento.
     const estado = async (id: number) => (await db.select().from(schema.solicitudesCompra).where(eq(schema.solicitudesCompra.id, id)))[0].estado;
@@ -122,7 +127,7 @@ describe.skipIf(!url)("compras (integración)", () => {
     expect(await estado(propia)).toBe("ENVIADA");
     await resolverSc(db, jefe, propia, true);
     expect(await estado(propia)).toBe("APROBADA");
-    expect(await avisos(compras.id)).toEqual(["Solicitud de compra SC-00002 visada", "Solicitud de compra SC-00002 visada: lista para cotizar"]);
+    expect(await avisos(compras.id)).toEqual(["Presolicitud aprobada: ahora es la solicitud de compra SC-00002", "Solicitud de compra SC-00002 aprobada: lista para cotizar"]);
     // La que crea el planificador o el jefe nace visada.
     expect(await estado(await crearSc(db, planificador, { lineas: [{ repuestoId: rod, cantidad: 1 }] }))).toBe("APROBADA");
   });
@@ -147,11 +152,13 @@ describe.skipIf(!url)("compras (integración)", () => {
     await expect(cambiarImputacionOc(db, bodeguero, id, { cuentaId: cuenta, centroCostoId: otro })).rejects.toThrow("Solo abastecimiento");
     await cambiarImputacionOc(db, compras, id, { cuentaId: cuenta, centroCostoId: otro });
     expect((await oc(id)).centroCostoId).toBe(otro);
-    // Se avisa a quienes autorizan: jefe y gerente, no al planificador.
+    // La ruta parte por el jefe de mantenimiento: se le avisa a él; al gerente, cuando el jefe ya firmó.
     const porAutorizar = "Orden de compra OC-00001 por autorizar: Rodamientos del Sur";
     expect(await avisos(jefe.id)).toContain(porAutorizar);
-    expect(await avisos(gerente.id)).toEqual([porAutorizar]);
+    expect(await avisos(gerente.id)).toEqual([]);
     expect(await avisos(planificador.id)).not.toContain(porAutorizar);
+    await autorizarOc(db, jefe, id);
+    expect(await avisos(gerente.id)).toEqual(["Orden de compra OC-00001 por autorizar: ya firmó el jefe de mantenimiento"]);
   });
 
   it("autorización: hacen falta las dos, jefe de mantenimiento y gerente de producción", async () => {
@@ -159,6 +166,8 @@ describe.skipIf(!url)("compras (integración)", () => {
     await expect(autorizarOc(db, planificador, id)).rejects.toThrow("No tienes permiso");
     await expect(autorizarOc(db, compras, id)).rejects.toThrow("No tienes permiso");
     await expect(recibirOc(db, bodeguero, { ocId: id, almacenId: central, cantidades: {} })).rejects.toThrow("no está autorizada");
+    // La ruta va en orden: el gerente de producción no firma antes que el jefe de mantenimiento.
+    await expect(autorizarOc(db, gerente, id)).rejects.toThrow("primero debe autorizar el jefe de mantenimiento");
     expect(await autorizarOc(db, jefe, id)).toEqual({ completa: false });
     expect((await oc(id)).estado).toBe("EMITIDA");
     await expect(autorizarOc(db, jefe, id)).rejects.toThrow("Ya está la autorización de jefe de mantenimiento");
@@ -214,19 +223,20 @@ describe.skipIf(!url)("compras (integración)", () => {
     expect((await oc(id)).ivaExento).toBe(true);
   });
 
-  it("gerente general: su firma es opcional, no reemplaza a las obligatorias y puede darla después", async () => {
+  it("gerente general: su firma es opcional y va al final de la ruta, después de las dos obligatorias", async () => {
     const [u] = await db.insert(schema.usuarios).values({ nombre: "Gerente General", perfil: "ADMINISTRADOR", identificador: "10000000-8", claveHash: "x" }).returning();
     const general: UsuarioSesion = { id: u.id, nombre: u.nombre, perfil: u.perfil };
     await expect(autorizarOc(db, general, await ocEmitida())).rejects.toThrow("No tienes permiso");
     await expect(fijarAutorizador(db, gerente, jefe.id, "GERENTE_GENERAL")).rejects.toThrow("no puede firmar como gerente general");
     await fijarAutorizador(db, gerente, general.id, "GERENTE_GENERAL");
     const id = await ocEmitida();
-    // General + jefe no bastan: falta el gerente de producción.
-    expect(await autorizarOc(db, general, id)).toEqual({ completa: false });
+    // El gerente general no firma antes que el jefe ni que el gerente de producción.
+    await expect(autorizarOc(db, general, id)).rejects.toThrow("primero deben autorizar");
     expect(await autorizarOc(db, jefe, id)).toEqual({ completa: false });
-    expect((await oc(id)).estado).toBe("EMITIDA");
+    await expect(autorizarOc(db, general, id)).rejects.toThrow("primero deben autorizar");
     expect(await autorizarOc(db, gerente, id)).toEqual({ completa: true });
     expect((await oc(id)).estado).toBe("AUTORIZADA");
+    expect(await avisos(general.id)).toContain(`Orden de compra OC-0000${id} autorizada: tu firma como gerente general es opcional`);
     // En otra orden, ya autorizada por los dos obligatorios, el general firma después sin cambiar el estado ni el código.
     const otra = await ocEmitida();
     await autorizarOc(db, jefe, otra);
@@ -302,6 +312,10 @@ describe.skipIf(!url)("compras (integración)", () => {
     await registrarEntrada(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 5, costoUnitario: 1000 });
     expect(await propuestaDeCompra(db)).toEqual([]); // 5 no está bajo el mínimo de 4
     await registrarSalida(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 3 });
+    // Al quedar bajo el mínimo nació sola la presolicitud por lo que falta para el máximo (12 − 2 = 10): ya viene en camino.
+    expect((await propuestaDeCompra(db)).map((p) => [p.codigo, p.total, p.enCamino, p.sugerida])).toEqual([["ROD-6204", 2, 10, 0]]);
+    const [auto] = await db.select().from(schema.solicitudesCompra);
+    await resolverSc(db, bodeguero, auto.id, false, "Se compra a mano");
     expect((await propuestaDeCompra(db)).map((p) => [p.codigo, p.total, p.enCamino, p.sugerida])).toEqual([["ROD-6204", 2, 0, 10]]);
     const sc = await crearSc(db, bodeguero, { lineas: [{ repuestoId: rod, cantidad: 6 }] });
     expect((await propuestaDeCompra(db))[0]).toMatchObject({ enCamino: 6, sugerida: 4 });
@@ -309,6 +323,169 @@ describe.skipIf(!url)("compras (integración)", () => {
     const [l] = await lineasDeSc(sc);
     await emitirOc(db, compras, { ...imp(), scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l.id]: 1000 } });
     expect((await propuestaDeCompra(db))[0]).toMatchObject({ enCamino: 6, sugerida: 4 }); // ahora en la OC, no dos veces
+  });
+
+  // ---------- Proceso de solicitudes de compra y abastecimiento (diagrama de la gerencia) ----------
+
+  const sc1 = async (id: number) => (await db.select().from(schema.solicitudesCompra).where(eq(schema.solicitudesCompra.id, id)))[0];
+  /** OC autorizada por la ruta completa, a partir de una SC ya aprobada, con todas sus líneas al precio dado. */
+  async function ocAutorizada(scId: number, extra: Partial<Parameters<typeof emitirOc>[2]> = {}, precio = 1000) {
+    const precios = Object.fromEntries((await lineasDeSc(scId)).map((l) => [l.id, precio]));
+    const id = await emitirOc(db, compras, { ...imp(), scId, proveedorId: proveedor, moneda: "CLP", precios, ...extra });
+    await autorizarOc(db, jefe, id);
+    await autorizarOc(db, gerente, id);
+    return id;
+  }
+
+  it("stock mínimo: nace sola la presolicitud, la aprueba el encargado de bodega y pasa a ser la SC", async () => {
+    await registrarEntrada(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 5, costoUnitario: 1000 });
+    await registrarSalida(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 1 });
+    expect(await db.select().from(schema.solicitudesCompra)).toEqual([]); // 4 no está bajo el mínimo de 4
+    await registrarSalida(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 1 });
+    const [psc] = await db.select().from(schema.solicitudesCompra);
+    expect(psc).toMatchObject({ estado: "ENVIADA", origen: "STOCK_MINIMO", tipo: "INVENTARIO" });
+    expect(folioDe(psc)).toBe("PSC-00001");
+    expect((await lineasDeSc(psc.id)).map((l) => [l.repuestoId, l.cantidad])).toEqual([[rod, 9]]); // hasta el máximo: 12 − 3
+    // Otra salida: no se abre una segunda presolicitud; la misma línea sube a lo que falta (12 − 1 = 11).
+    await registrarSalida(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 2 });
+    expect(await db.select().from(schema.solicitudesCompra)).toHaveLength(1);
+    expect((await lineasDeSc(psc.id)).map((l) => l.cantidad)).toEqual([11]);
+    // La aprueba el encargado de bodega, no el jefe ni abastecimiento.
+    await expect(resolverSc(db, jefe, psc.id, true)).rejects.toThrow("la aprueba el encargado de bodega");
+    await expect(resolverSc(db, compras, psc.id, true)).rejects.toThrow("la aprueba el encargado de bodega");
+    await resolverSc(db, bodeguero, psc.id, true);
+    const sc = await sc1(psc.id);
+    expect(sc.estado).toBe("APROBADA");
+    expect(folioDe(sc)).toBe("SC-00001");
+    expect(await avisos(compras.id)).toContain("Solicitud de compra SC-00001 aprobada: lista para cotizar");
+    // Con la compra en camino, otra salida no vuelve a pedir lo mismo.
+    await registrarSalida(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 1 });
+    const todas = await db.select().from(schema.solicitudesCompra).orderBy(schema.solicitudesCompra.id);
+    expect(todas.map((s) => [s.estado, s.origen])).toEqual([["APROBADA", "STOCK_MINIMO"], ["ENVIADA", "STOCK_MINIMO"]]);
+    expect((await lineasDeSc(todas[1].id)).map((l) => l.cantidad)).toEqual([1]); // solo la unidad que salió después
+  });
+
+  it("tipos de SC: inventario, sin código de inventario y servicios", async () => {
+    expect((await sc1(await crearSc(db, jefe, { lineas: [{ repuestoId: rod, cantidad: 1 }] }))).tipo).toBe("INVENTARIO");
+    expect((await sc1(await crearSc(db, jefe, { lineas: [{ descripcion: "Guantes de nitrilo", cantidad: 10 }] }))).tipo).toBe("SIN_CODIGO");
+    expect((await sc1(await crearSc(db, jefe, { tipo: "SERVICIO", lineas: [{ descripcion: "Rectificado de rodillo", cantidad: 1 }] }))).tipo).toBe("SERVICIO");
+    // Inventario admite una línea anexa (un flete), pero necesita al menos un repuesto del catálogo.
+    expect((await sc1(await crearSc(db, jefe, { tipo: "INVENTARIO", lineas: [{ repuestoId: rod, cantidad: 1 }, { descripcion: "Flete", cantidad: 1 }] }))).tipo).toBe("INVENTARIO");
+    await expect(crearSc(db, jefe, { tipo: "INVENTARIO", lineas: [{ descripcion: "Guantes", cantidad: 1 }] })).rejects.toThrow("Ninguna línea es un repuesto del catálogo");
+    await expect(crearSc(db, jefe, { tipo: "SERVICIO", lineas: [{ repuestoId: rod, cantidad: 1 }] })).rejects.toThrow("es un repuesto del catálogo");
+    await expect(crearSc(db, jefe, { tipo: "SIN_CODIGO", lineas: [{ repuestoId: rod, cantidad: 1 }] })).rejects.toThrow("es un repuesto del catálogo");
+  });
+
+  it("proveedores sugeridos: los del historial de compra, con la última compra primero", async () => {
+    const nueva = () => crearSc(db, jefe, { lineas: [{ repuestoId: rod, cantidad: 2 }] });
+    expect(await proveedoresSugeridos(db, await nueva())).toEqual([]); // sin historial
+    const [otro] = await db.insert(schema.proveedores).values({ nombre: "Importadora Andes" }).returning();
+    await ocAutorizada(await nueva(), {}, 1000);
+    await ocAutorizada(await nueva(), {}, 1100);
+    await ocAutorizada(await nueva(), { proveedorId: otro.id, moneda: "USD" }, 1.5);
+    // Una orden sin autorizar no cuenta como historial.
+    const sinFirma = await nueva();
+    await emitirOc(db, compras, { ...imp(), scId: sinFirma, proveedorId: otro.id, moneda: "CLP", precios: { [(await lineasDeSc(sinFirma))[0].id]: 5 } });
+    const sugeridos = await proveedoresSugeridos(db, await nueva());
+    expect(sugeridos.map((s) => [s.proveedor, s.compras, s.ultimoPrecio, s.moneda, s.ultimaOc])).toEqual([
+      ["Importadora Andes", 1, 1.5, "USD", 3],
+      ["Rodamientos del Sur", 2, 1100, "CLP", 2],
+    ]);
+  });
+
+  it("OC de importación: exige incoterm y vía de embarque; la nacional no los guarda", async () => {
+    const sc = await crearSc(db, jefe, { lineas: [{ repuestoId: rod, cantidad: 2 }, { descripcion: "Flete", cantidad: 1 }] });
+    const [l1, l2] = await lineasDeSc(sc);
+    const base = { ...imp(), scId: sc, proveedorId: proveedor, moneda: "EUR" as const };
+    await expect(emitirOc(db, compras, { ...base, tipo: "IMPORTACION", precios: { [l1.id]: 10 } })).rejects.toThrow("necesita el incoterm");
+    await expect(emitirOc(db, compras, { ...base, tipo: "IMPORTACION", incoterm: "FOB", precios: { [l1.id]: 10 } })).rejects.toThrow("necesita la vía de embarque");
+    const imp1 = await emitirOc(db, compras, { ...base, tipo: "IMPORTACION", incoterm: "fob", viaEmbarque: "Marítima", precios: { [l1.id]: 10 } });
+    expect(await oc(imp1)).toMatchObject({ tipo: "IMPORTACION", incoterm: "FOB", viaEmbarque: "Marítima" });
+    const nac = await emitirOc(db, compras, { ...base, moneda: "CLP", incoterm: "FOB", viaEmbarque: "Aérea", precios: { [l2.id]: 10 } });
+    expect(await oc(nac)).toMatchObject({ tipo: "NACIONAL", incoterm: null, viaEmbarque: null });
+  });
+
+  it("recepción completa: se avisa a abastecimiento, que envía la orden al proveedor y la cierra", async () => {
+    const sc = await crearSc(db, jefe, { lineas: [{ repuestoId: rod, cantidad: 4 }] });
+    const precios = { [(await lineasDeSc(sc))[0].id]: 1000 };
+    const id = await emitirOc(db, compras, { ...imp(), scId: sc, proveedorId: proveedor, moneda: "CLP", precios });
+    await expect(marcarEnviadaOc(db, compras, id)).rejects.toThrow("no completa su ruta de aprobación");
+    await autorizarOc(db, jefe, id);
+    await autorizarOc(db, gerente, id);
+    await expect(marcarEnviadaOc(db, bodeguero, id)).rejects.toThrow("Solo abastecimiento");
+    await marcarEnviadaOc(db, compras, id);
+    expect((await oc(id)).enviadaEn).toBeInstanceOf(Date);
+    await expect(marcarEnviadaOc(db, compras, id)).rejects.toThrow("ya figura enviada");
+    await expect(cerrarOc(db, compras, id)).rejects.toThrow("antes bodega debe registrar la recepción");
+    const [l] = await db.select().from(schema.lineasOc).where(eq(schema.lineasOc.ocId, id));
+    await recibirOc(db, bodeguero, { ocId: id, almacenId: central, cantidades: { [l.id]: 3 } });
+    // Con saldo por recibir, cerrar exige una explicación.
+    await expect(cerrarOc(db, compras, id)).rejects.toThrow("explica por qué se cierra así");
+    await recibirOc(db, bodeguero, { ocId: id, almacenId: central, cantidades: { [l.id]: 1 } });
+    expect(await avisos(compras.id)).toContain("Orden de compra OC-00001: recepción total en Bodega central. Lista para cerrar.");
+    await expect(cerrarOc(db, bodeguero, id)).rejects.toThrow("Solo abastecimiento");
+    await cerrarOc(db, compras, id);
+    expect(await oc(id)).toMatchObject({ estado: "RECIBIDA_TOTAL", cerradaPor: compras.id });
+    await expect(cerrarOc(db, compras, id)).rejects.toThrow("ya está cerrada");
+    expect(await avisos(jefe.id)).toContain("Orden de compra OC-00001 cerrada");
+    // Cierre con saldo: deja de admitir recepciones.
+    const sc2 = await crearSc(db, jefe, { lineas: [{ repuestoId: rod, cantidad: 4 }] });
+    const otra = await ocAutorizada(sc2);
+    const [l2] = await db.select().from(schema.lineasOc).where(eq(schema.lineasOc.ocId, otra));
+    await recibirOc(db, bodeguero, { ocId: otra, almacenId: central, cantidades: { [l2.id]: 1 } });
+    // Mientras está abierta, el saldo (3) cuenta como en camino; cerrada con motivo, deja de contar.
+    const enOc = async () => Number((await db.execute(sql`select coalesce(sum(l.cantidad - l.recibida), 0) n from lineas_oc l join ordenes_compra o on o.id = l.oc_id where o.estado = 'RECIBIDA_PARCIAL' and o.cerrada_en is null`)).rows[0].n);
+    expect(await enOc()).toBe(3);
+    await registrarSalida(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 4 }); // quedan 1 de 5 → bajo el mínimo de 4
+    expect((await propuestaDeCompra(db))[0]).toMatchObject({ total: 1, enCamino: 11 }); // 3 de la OC + 8 de la presolicitud automática
+    await cerrarOc(db, compras, otra, "El proveedor descontinuó el repuesto");
+    expect(await oc(otra)).toMatchObject({ estado: "RECIBIDA_PARCIAL", notaCierre: "El proveedor descontinuó el repuesto" });
+    expect((await propuestaDeCompra(db))[0]).toMatchObject({ total: 1, enCamino: 8, sugerida: 3 }); // el saldo cerrado vuelve a proponerse
+    await expect(recibirOc(db, bodeguero, { ocId: otra, almacenId: central, cantidades: { [l2.id]: 1 } })).rejects.toThrow("no admite recepciones");
+  });
+
+  it("OC de servicio: no entra a bodega; el jefe de área firma la factura y queda pendiente de cierre", async () => {
+    const sc = await crearSc(db, planificador, { tipo: "SERVICIO", lineas: [{ descripcion: "Rectificado de rodillo", cantidad: 1 }] });
+    const id = await ocAutorizada(sc, {}, 250000);
+    expect(await avisos(planificador.id)).toContain("Orden de servicio OC-00001 autorizada: cuando llegue la factura del proveedor, el jefe de área debe firmarla en el sistema");
+    const [l] = await db.select().from(schema.lineasOc).where(eq(schema.lineasOc.ocId, id));
+    await expect(recibirOc(db, bodeguero, { ocId: id, almacenId: central, cantidades: { [l.id]: 1 } })).rejects.toThrow("no se recibe en bodega");
+    await expect(cerrarOc(db, compras, id)).rejects.toThrow("antes el jefe de área debe firmar la factura");
+    await expect(conformarServicio(db, compras, id, "F-1234")).rejects.toThrow("la firma el jefe de área");
+    await expect(conformarServicio(db, jefe, id, " ")).rejects.toThrow("número de la factura");
+    await conformarServicio(db, jefe, id, "F-1234");
+    expect(await oc(id)).toMatchObject({ estado: "RECIBIDA_TOTAL", facturaServicio: "F-1234", conformePor: jefe.id, cerradaEn: null });
+    expect((await db.select().from(schema.lineasOc).where(eq(schema.lineasOc.ocId, id)))[0].recibida).toBe(1);
+    expect(await db.select().from(schema.movimientos)).toEqual([]);
+    const pendiente = "Orden de servicio OC-00001: Jefe Mantención firmó la factura F-1234. Pendiente de cierre.";
+    expect(await avisos(compras.id)).toContain(pendiente);
+    expect(await avisos(planificador.id)).toContain(pendiente); // el usuario que la pidió
+    await expect(conformarServicio(db, jefe, id, "F-9")).rejects.toThrow("ya fue firmada");
+    await cerrarOc(db, compras, id);
+    expect((await oc(id)).cerradaEn).toBeInstanceOf(Date);
+    // Una orden que no es de servicio no se cierra con factura.
+    const otra = await ocAutorizada(await crearSc(db, jefe, { lineas: [{ repuestoId: rod, cantidad: 1 }] }));
+    await expect(conformarServicio(db, jefe, otra, "F-2")).rejects.toThrow("no es de servicio");
+  });
+
+  it("Capex: entra a la bodega Capex con su costo y no cambia el costo medio ni el stock del inventario", async () => {
+    const capex = (await db.select().from(schema.almacenes)).find((a) => a.esCapex)!.id;
+    await registrarEntrada(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 10, costoUnitario: 1000 });
+    const id = await ocAutorizada(await crearSc(db, jefe, { lineas: [{ repuestoId: rod, cantidad: 5 }] }), { esCapex: true }, 9000);
+    const [l] = await db.select().from(schema.lineasOc).where(eq(schema.lineasOc.ocId, id));
+    await expect(recibirOc(db, bodeguero, { ocId: id, almacenId: central, cantidades: { [l.id]: 5 } })).rejects.toThrow("se recibe en la bodega Capex");
+    await recibirOc(db, bodeguero, { ocId: id, almacenId: capex, cantidades: { [l.id]: 5 } });
+    const r = (await db.select().from(schema.repuestos).where(eq(schema.repuestos.id, rod)))[0];
+    expect(r.costoMedio).toBe(1000); // sin Capex sería (10 × 1.000 + 5 × 9.000) ÷ 15 = 3.666,67
+    const mov = (await db.select().from(schema.movimientos).orderBy(schema.movimientos.id)).at(-1)!;
+    expect(mov).toMatchObject({ tipo: "ENTRADA", almacenId: capex, cantidad: 5, costoUnitario: 9000 });
+    // Para el stock mínimo y la propuesta de compra solo cuenta el inventario: 10, no 15.
+    await registrarSalida(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 7 });
+    expect((await propuestaDeCompra(db))[0]).toMatchObject({ total: 3, enCamino: 9, sugerida: 0 });
+    // Una orden normal no se recibe en la bodega Capex.
+    const normal = await ocAutorizada(await crearSc(db, jefe, { lineas: [{ repuestoId: rod, cantidad: 1 }] }));
+    const [ln] = await db.select().from(schema.lineasOc).where(eq(schema.lineasOc.ocId, normal));
+    await expect(recibirOc(db, bodeguero, { ocId: normal, almacenId: capex, cantidades: { [ln.id]: 1 } })).rejects.toThrow("solo recibe órdenes de compra Capex");
   });
 
   it("centros de costo: código único", async () => {

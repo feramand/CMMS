@@ -25,6 +25,9 @@ export async function listarSc(filtro?: SQL, limite = 200) {
     .select({
       id: solicitudesCompra.id,
       estado: solicitudesCompra.estado,
+      tipo: solicitudesCompra.tipo,
+      origen: solicitudesCompra.origen,
+      solicitanteId: solicitudesCompra.solicitanteId,
       nota: solicitudesCompra.nota,
       motivoRechazo: solicitudesCompra.motivoRechazo,
       creadaEn: solicitudesCompra.creadaEn,
@@ -48,6 +51,7 @@ export async function listarSc(filtro?: SQL, limite = 200) {
 
 const emisor = alias(usuarios, "emisor");
 const solicitante = alias(usuarios, "solicitante");
+const conforme = alias(usuarios, "conforme");
 
 export async function listarOc(filtro?: SQL, limite = 200) {
   const ocs = await db
@@ -81,6 +85,18 @@ export async function listarOc(filtro?: SQL, limite = 200) {
       proveedorGiro: proveedores.giro,
       proveedorEmail: proveedores.email,
       proveedorTelefono: proveedores.telefono,
+      tipo: ordenesCompra.tipo,
+      incoterm: ordenesCompra.incoterm,
+      viaEmbarque: ordenesCompra.viaEmbarque,
+      esCapex: ordenesCompra.esCapex,
+      enviadaEn: ordenesCompra.enviadaEn,
+      facturaServicio: ordenesCompra.facturaServicio,
+      conformeEn: ordenesCompra.conformeEn,
+      conforme: conforme.nombre,
+      cerradaEn: ordenesCompra.cerradaEn,
+      notaCierre: ordenesCompra.notaCierre,
+      scTipo: solicitudesCompra.tipo,
+      solicitanteId: solicitudesCompra.solicitanteId,
     })
     .from(ordenesCompra)
     .innerJoin(proveedores, eq(proveedores.id, ordenesCompra.proveedorId))
@@ -89,6 +105,7 @@ export async function listarOc(filtro?: SQL, limite = 200) {
     .innerJoin(solicitante, eq(solicitante.id, solicitudesCompra.solicitanteId))
     .leftJoin(centrosCosto, eq(centrosCosto.id, ordenesCompra.centroCostoId))
     .leftJoin(cuentasContables, eq(cuentasContables.id, ordenesCompra.cuentaId))
+    .leftJoin(conforme, eq(conforme.id, ordenesCompra.conformePor))
     .where(filtro)
     .orderBy(desc(ordenesCompra.id))
     .limit(limite);
