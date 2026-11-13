@@ -113,6 +113,16 @@ describe.skipIf(!url)("solicitudes y órdenes de trabajo (integración)", () => 
     expect(await avisosDe(operador)).toHaveLength(0); // quien reporta no se avisa a sí mismo
   });
 
+  it("operadores, técnicos y jefes reportan a mano una falla de servicios generales (infraestructura)", async () => {
+    const { id } = await nueva("SERVICIOS_GENERALES", operador);
+    const [s] = await db.select().from(schema.solicitudes).where(eq(schema.solicitudes.id, id));
+    expect(s).toMatchObject({ categoria: "SERVICIOS_GENERALES", origen: "OPERADOR" });
+    // Misma máquina y categoría: los avisos del técnico y del jefe se suman a la solicitud abierta.
+    expect(await nueva("SERVICIOS_GENERALES", mec1)).toEqual({ id, duplicada: true });
+    expect(await nueva("SERVICIOS_GENERALES", jefe)).toEqual({ id, duplicada: true });
+    await expect(nueva("SERVICIOS_GENERALES", bodeguero)).rejects.toThrow("no puede reportar fallas");
+  });
+
   it("una falla indeterminada avisa a mecánicos y eléctricos", async () => {
     await nueva("INDETERMINADA");
     expect(await avisosDe(mec1)).toHaveLength(1);
