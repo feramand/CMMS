@@ -43,3 +43,6 @@ next-env.d.ts
 
 # fotos adjuntas (datos de la planta, no código)
 /datos/
+
+# logo y datos de la empresa (no son código)
+/empresa/
