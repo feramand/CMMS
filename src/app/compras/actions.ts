@@ -73,6 +73,8 @@ export async function accionEmitirOc(f: FormData) {
       cuentaId: entero(f.get("cuentaId")) || null,
       centroCostoId: entero(f.get("centroCostoId")) || null,
       ivaExento: f.get("ivaExento") === "on",
+      cotizacionRef: texto(f.get("cotizacionRef")),
+      referencia: texto(f.get("referencia")),
       proveedorId: entero(f.get("proveedorId")),
       moneda: texto(f.get("moneda")) as Moneda,
       fechaEntrega: texto(f.get("fechaEntrega")),

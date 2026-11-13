@@ -757,6 +757,9 @@ export const ordenesCompra = pgTable("ordenes_compra", {
   centroCostoId: integer("centro_costo_id").references(() => centrosCosto.id),
   cuentaId: integer("cuenta_id").references(() => cuentasContables.id),
   ivaExento: boolean("iva_exento").notNull().default(false),
+  // Número de la cotización del proveedor y referencia libre; van impresos en la OC.
+  cotizacionRef: text("cotizacion_ref"),
+  referencia: text("referencia"),
   fechaEntrega: date("fecha_entrega"),
   condicionPago: text("condicion_pago"),
   nota: text("nota"),

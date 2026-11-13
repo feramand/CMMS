@@ -180,6 +180,14 @@ export default async function Sc({ params, searchParams }: Props) {
                 <input name="condicionPago" className={campo} />
               </label>
               <label className="flex flex-col gap-1 text-sm font-semibold">
+                N° de la cotización del proveedor (opcional)
+                <input name="cotizacionRef" className={campo} />
+              </label>
+              <label className="flex flex-col gap-1 text-sm font-semibold">
+                Referencia (opcional)
+                <input name="referencia" placeholder="Para qué es, factura proforma…" className={campo} />
+              </label>
+              <label className="flex flex-col gap-1 text-sm font-semibold">
                 Cuenta contable
                 <select name="cuentaId" required defaultValue={sc.cuentaId ?? ""} className={campo}>
                   <option value="" disabled>

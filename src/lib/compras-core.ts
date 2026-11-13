@@ -345,6 +345,8 @@ export type DatosOc = {
   cuentaId?: number | null;
   centroCostoId?: number | null;
   ivaExento?: boolean;
+  cotizacionRef?: string | null;
+  referencia?: string | null;
   fechaEntrega?: string | null;
   condicionPago?: string | null;
   nota?: string | null;
@@ -391,6 +393,8 @@ export async function emitirOc(db: DB, actor: UsuarioSesion, d: DatosOc): Promis
         centroCostoId,
         cuentaId,
         ivaExento: d.ivaExento ?? false,
+        cotizacionRef: d.cotizacionRef?.trim() || null,
+        referencia: d.referencia?.trim() || null,
         fechaEntrega: d.fechaEntrega || null,
         condicionPago: d.condicionPago?.trim() || prov.condicionPago,
         nota: d.nota?.trim() || null,

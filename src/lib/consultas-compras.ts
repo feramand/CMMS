@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, desc, eq, inArray, type SQL } from "drizzle-orm";
+import { asc, desc, eq, getTableColumns, inArray, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import {
@@ -10,6 +10,7 @@ import {
   lineasSc,
   ordenesCompra,
   proveedores,
+  repuestos,
   solicitudesCompra,
   usuarios,
 } from "@/db/schema";
@@ -46,6 +47,7 @@ export async function listarSc(filtro?: SQL, limite = 200) {
 }
 
 const emisor = alias(usuarios, "emisor");
+const solicitante = alias(usuarios, "solicitante");
 
 export async function listarOc(filtro?: SQL, limite = 200) {
   const ocs = await db
@@ -72,6 +74,10 @@ export async function listarOc(filtro?: SQL, limite = 200) {
       cuenta: cuentasContables.nombre,
       cuentaCodigo: cuentasContables.codigo,
       ivaExento: ordenesCompra.ivaExento,
+      cotizacionRef: ordenesCompra.cotizacionRef,
+      referencia: ordenesCompra.referencia,
+      solicita: solicitante.nombre,
+      emisorEmail: emisor.email,
       proveedorGiro: proveedores.giro,
       proveedorEmail: proveedores.email,
       proveedorTelefono: proveedores.telefono,
@@ -79,6 +85,8 @@ export async function listarOc(filtro?: SQL, limite = 200) {
     .from(ordenesCompra)
     .innerJoin(proveedores, eq(proveedores.id, ordenesCompra.proveedorId))
     .innerJoin(emisor, eq(emisor.id, ordenesCompra.emitidaPor))
+    .innerJoin(solicitudesCompra, eq(solicitudesCompra.id, ordenesCompra.scId))
+    .innerJoin(solicitante, eq(solicitante.id, solicitudesCompra.solicitanteId))
     .leftJoin(centrosCosto, eq(centrosCosto.id, ordenesCompra.centroCostoId))
     .leftJoin(cuentasContables, eq(cuentasContables.id, ordenesCompra.cuentaId))
     .where(filtro)
@@ -87,7 +95,12 @@ export async function listarOc(filtro?: SQL, limite = 200) {
   if (ocs.length === 0) return [];
   const ids = ocs.map((o) => o.id);
   const [lineas, firmas] = await Promise.all([
-    db.select().from(lineasOc).where(inArray(lineasOc.ocId, ids)).orderBy(asc(lineasOc.id)),
+    db
+      .select({ ...getTableColumns(lineasOc), codigo: repuestos.codigo, unidad: repuestos.unidad, numeroParte: repuestos.codigoFabricante, nombreRepuesto: repuestos.descripcion })
+      .from(lineasOc)
+      .leftJoin(repuestos, eq(repuestos.id, lineasOc.repuestoId))
+      .where(inArray(lineasOc.ocId, ids))
+      .orderBy(asc(lineasOc.id)),
     db.select().from(autorizacionesOc).where(inArray(autorizacionesOc.ocId, ids)).orderBy(asc(autorizacionesOc.fecha)),
   ]);
   return ocs.map((o) => {
