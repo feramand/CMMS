@@ -92,6 +92,21 @@ export const fichasTecnico = pgTable("fichas_tecnico", {
   horaSalida: time("hora_salida"),
 });
 
+// Matriz de competencias: nivel de cada técnico en cada máquina. Sin fila = sin competencia registrada.
+export const competencias = pgTable(
+  "competencias",
+  {
+    usuarioId: integer("usuario_id")
+      .notNull()
+      .references(() => usuarios.id, { onDelete: "cascade" }),
+    activoId: integer("activo_id")
+      .notNull()
+      .references((): AnyPgColumn => activos.id, { onDelete: "cascade" }),
+    nivel: nivelEnum("nivel").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.usuarioId, t.activoId] })],
+);
+
 export const feriados = pgTable("feriados", {
   fecha: date("fecha").primaryKey(),
   nombre: text("nombre").notNull(),
@@ -270,6 +285,9 @@ export const solicitudes = pgTable("solicitudes", {
   responsableId: integer("responsable_id").references(() => usuarios.id),
   tomadaEn: timestamp("tomada_en", { withTimezone: true }),
   cerradaEn: timestamp("cerrada_en", { withTimezone: true }),
+  // Hora en que la máquina volvió a producir, informada por Metrics («fin de detención»).
+  // Si existe, el tiempo detenido termina aquí y no en el cierre de la solicitud.
+  reanudadaEn: timestamp("reanudada_en", { withTimezone: true }),
   sectorId: integer("sector_id").references(() => sectores.id),
   solucion: text("solucion"),
   // Origen real, obligatorio al cerrar una solicitud que llegó como indeterminada.

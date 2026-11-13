@@ -160,6 +160,21 @@ describe.skipIf(!url)("indicadores (integración)", () => {
     expect(xl).toMatchObject({ minutosDetenida: 360, fallas: 3, iniciadas: 3, mtbf: 9_240, pctDetenida: 1.3 }); // (28.080 − 360) / 3 = 9.240
   });
 
+  it("si Metrics informa el fin de la detención, el tiempo de BD termina ahí y no en el cierre", async () => {
+    // F3 seguía abierta; la máquina volvió a producir el 20 a las 10:00 → 60 min en vez de 15.300.
+    await db.execute(sql`UPDATE solicitudes SET reanudada_en = '2026-11-20T10:00:00-03:00' WHERE estado = 'EN_ATENCION'`);
+    // F1 se cerró a las 11:00, pero la máquina partió a las 10:40 → 40 min en vez de 60.
+    await db.execute(sql`UPDATE solicitudes SET reanudada_en = '2026-11-10T10:40:00-03:00' WHERE origen = 'METRICS'`);
+    const i = await informe(db, "2026-11-01", "2026-11-30", t("12-05T12:00"));
+    const xl = i.maquinas.find((m) => m.activoId === a)!;
+    expect(xl).toMatchObject({
+      fallas: 3, abiertas: 0, minutosDetenida: 220, // 40 + 120 + 60
+      resueltas: 3, mttr: 73, // (40 + 120 + 60) / 3 = 73,3
+      mtbf: 14_327, // (43.200 − 220) / 3 = 14.326,7
+    });
+    expect(i.detencion.minutos).toBe(340); // 220 + 120 de la otra máquina
+  });
+
   it("el período por defecto es el mes en curso y corrige fechas invertidas o inválidas", () => {
     const ahora = t("11-13T10:00");
     expect(periodoPedido({}, ahora)).toEqual({ desde: "2026-11-01", hasta: "2026-11-13", hoy: "2026-11-13" });

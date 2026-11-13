@@ -316,4 +316,20 @@ describe.skipIf(!url)("compras (integración)", () => {
     await expect(guardarCentro(db, compras, { codigo: "CC-100", nombre: "Otro" })).rejects.toThrow("Ya existe un centro de costo con el código CC-100");
     await expect(guardarCentro(db, bodeguero, { codigo: "CC-200", nombre: "x" })).rejects.toThrow("Solo abastecimiento");
   });
+
+  it("el administrador fija desde qué número sigue el folio de las órdenes de compra", async () => {
+    const { fijarProximoFolioOc, folioOc, proximoFolioOc } = await import("./compras-core");
+    expect(await proximoFolioOc(db)).toBe(1);
+    await expect(fijarProximoFolioOc(db, compras, 62_061)).rejects.toThrow("Solo el administrador");
+    await expect(fijarProximoFolioOc(db, gerente, 0)).rejects.toThrow("entero mayor que cero");
+    await fijarProximoFolioOc(db, gerente, 62_061);
+    expect(await proximoFolioOc(db)).toBe(62_061);
+    const [prov] = await db.insert(schema.proveedores).values({ rut: "76000000-0", nombre: "Proveedor" }).returning();
+    const [sc] = await db.insert(schema.solicitudesCompra).values({ solicitanteId: compras.id, estado: "APROBADA" }).returning();
+    const [oc] = await db.insert(schema.ordenesCompra).values({ scId: sc.id, proveedorId: prov.id, emitidaPor: compras.id }).returning();
+    expect(folioOc(oc.id)).toBe("OC-62061");
+    // Solo hacia adelante: retroceder repetiría folios.
+    await expect(fijarProximoFolioOc(db, gerente, 100)).rejects.toThrow("no puede ser menor que 62062");
+    expect(await proximoFolioOc(db)).toBe(62_062);
+  });
 });
