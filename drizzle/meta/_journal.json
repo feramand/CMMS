@@ -127,6 +127,13 @@
       "when": 1794593167512,
       "tag": "0017_cierre",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794599633391,
+      "tag": "0018_proceso_compras",
+      "breakpoints": true
     }
   ]
 }

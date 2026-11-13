@@ -23,7 +23,10 @@ export default async function Existencias({ searchParams }: Props) {
     return true;
   });
   const bajoMinimo = todos.filter((r) => r.activo && r.stockMinimo > 0 && r.total < r.stockMinimo).length;
-  const valor = filas.reduce((s, r) => s + enAlmacen(r) * r.costoMedio, 0);
+  // La bodega Capex guarda cantidades, pero no entra a la valorización del inventario.
+  const esCapex = almacenes.find((a) => a.id === almacenId)?.esCapex ?? false;
+  const valorDe = (r: (typeof todos)[number]) => (esCapex ? 0 : enAlmacen(r) * r.costoMedio);
+  const valor = filas.reduce((s, r) => s + valorDe(r), 0);
   const visibles = almacenId ? almacenes.filter((a) => a.id === almacenId) : almacenes;
   return (
     <>
@@ -78,7 +81,7 @@ export default async function Existencias({ searchParams }: Props) {
             <p className="text-2xl font-bold">{filas.length.toLocaleString("es-CL")}</p>
           </div>
           <div className={tarjeta}>
-            <p className="text-sm text-slate-600">Valor de las existencias en la lista</p>
+            <p className="text-sm text-slate-600">Valor de las existencias en la lista (sin la bodega Capex)</p>
             <p className="text-2xl font-bold">{pesos(valor)}</p>
           </div>
           <Link href="/bodega?ver=minimo" className={tarjeta}>
@@ -149,7 +152,7 @@ export default async function Existencias({ searchParams }: Props) {
                   )}
                   <td className="px-3 py-2 text-right tabular-nums">{r.stockMinimo ? cant(r.stockMinimo) : "—"}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{pesos(r.costoMedio)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{pesos(enAlmacen(r) * r.costoMedio)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{pesos(valorDe(r))}</td>
                 </tr>
               ))}
               {filas.length === 0 && (

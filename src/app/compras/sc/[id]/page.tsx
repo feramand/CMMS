@@ -6,11 +6,11 @@ import { Encabezado } from "@/componentes/encabezado";
 import { AvisoError, botonPrimario, campo, Dato, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
 import { ordenesCompra, solicitudesCompra } from "@/db/schema";
-import { folioOc, folioSc, gestionaCompras, lineasConOc, MONEDAS, visaCompras } from "@/lib/compras-core";
+import { apruebaPsc, folioDe, folioOc, gestionaCompras, INCOTERMS, lineasConOc, MONEDAS, ORIGENES_SC, proveedoresSugeridos, TIPOS_OC, TIPOS_SC, VIAS_EMBARQUE } from "@/lib/compras-core";
 import { listarExistencias } from "@/lib/consultas-bodega";
 import { listarCentros, listarCuentas, listarProveedores, listarSc } from "@/lib/consultas-compras";
 import { exigirPerfil } from "@/lib/dal";
-import { cant, pesos } from "@/lib/formato";
+import { cant, monto, pesos } from "@/lib/formato";
 import { fechaHora } from "@/lib/tiempo";
 import { accionCerrarSc, accionEmitirOc, accionResolverSc } from "../../actions";
 
@@ -21,16 +21,21 @@ export default async function Sc({ params, searchParams }: Props) {
   const id = Number((await params).id);
   if (!Number.isInteger(id)) notFound();
   const { error } = await searchParams;
-  const [[sc], ocs, proveedores, cuentas, centros, cubiertas] = await Promise.all([
+  const [[sc], ocs, proveedores, cuentas, centros, cubiertas, historial] = await Promise.all([
     listarSc(eq(solicitudesCompra.id, id), 1),
     db.select({ id: ordenesCompra.id, estado: ordenesCompra.estado }).from(ordenesCompra).where(eq(ordenesCompra.scId, id)).orderBy(ordenesCompra.id),
     listarProveedores(),
     listarCuentas(),
     listarCentros(),
     lineasConOc(db, id),
+    proveedoresSugeridos(db, id),
   ]);
   if (!sc) notFound();
   const gestiona = gestionaCompras(usuario);
+  const aprueba = apruebaPsc(usuario, sc.origen);
+  const sugeridos = historial.filter((h) => !cubiertas.has(h.lineaScId));
+  const idsSugeridos = [...new Set(sugeridos.map((h) => h.proveedorId))];
+  const vigentes = proveedores.filter((p) => p.activo);
   const pendientes = sc ? sc.lineas.filter((l) => !cubiertas.has(l.id)) : [];
   const ids = sc.lineas.flatMap((l) => (l.repuestoId ? [l.repuestoId] : []));
   const repuestos = ids.length ? await listarExistencias({ ids, inactivos: true }) : [];
@@ -40,13 +45,21 @@ export default async function Sc({ params, searchParams }: Props) {
       <Encabezado usuario={usuario} />
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 p-4">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold">Solicitud de compra {folioSc(sc.id)}</h1>
+          <h1 className="text-2xl font-bold">
+            {sc.estado === "ENVIADA" || sc.estado === "RECHAZADA" ? "Presolicitud de compra" : "Solicitud de compra"} {folioDe(sc)}
+          </h1>
           <ChipSc estado={sc.estado} />
         </div>
         <MenuCompras actual="" />
         <AvisoError mensaje={error} />
         <section className={`${tarjeta} flex flex-col gap-4`}>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="col-span-2">
+              <Dato etiqueta="Tipo">{TIPOS_SC[sc.tipo]}</Dato>
+            </div>
+            <div className="col-span-2">
+              <Dato etiqueta="Origen">{ORIGENES_SC[sc.origen]}</Dato>
+            </div>
             <Dato etiqueta="Pidió">{sc.solicitante}</Dato>
             <Dato etiqueta="Fecha">{fechaHora(sc.creadaEn)}</Dato>
             <Dato etiqueta="Cuenta contable">{sc.cuenta ?? "—"}</Dato>
@@ -105,13 +118,16 @@ export default async function Sc({ params, searchParams }: Props) {
           </table>
         </section>
 
-        {!visaCompras(usuario) && sc.estado === "ENVIADA" && (
-          <p className={tarjeta}>Esta solicitud espera el visto bueno del planificador o del jefe. Visada, pasa a abastecimiento.</p>
+        {!aprueba && sc.estado === "ENVIADA" && (
+          <p className={tarjeta}>
+            Esta presolicitud espera la aprobación {sc.origen === "STOCK_MINIMO" ? "del encargado de bodega" : "del jefe de mantenimiento o del planificador"}.
+            Aprobada, pasa a ser la solicitud de compra y queda para abastecimiento.
+          </p>
         )}
-        {visaCompras(usuario) && sc.estado === "ENVIADA" && (
+        {aprueba && sc.estado === "ENVIADA" && (
           <form action={accionResolverSc} className={`${tarjeta} flex flex-col gap-3`}>
-            <h2 className="text-lg font-bold">Visar o rechazar</h2>
-            <p className="text-sm text-slate-600">Al visarla queda liberada para que abastecimiento cotice y emita las órdenes de compra.</p>
+            <h2 className="text-lg font-bold">Aprobar o rechazar la presolicitud</h2>
+            <p className="text-sm text-slate-600">Al aprobarla pasa a ser la solicitud de compra y queda liberada para que abastecimiento cotice y emita las órdenes de compra.</p>
             <input type="hidden" name="id" value={sc.id} />
             <label className="flex flex-col gap-1 text-sm font-semibold">
               Motivo (obligatorio para rechazar)
@@ -119,7 +135,7 @@ export default async function Sc({ params, searchParams }: Props) {
             </label>
             <div className="grid grid-cols-2 gap-3">
               <button name="decision" value="aprobar" className={botonPrimario}>
-                Visar
+                Aprobar
               </button>
               <button name="decision" value="rechazar" className="h-12 rounded-lg border-2 border-red-700 font-semibold text-red-700">
                 Rechazar
@@ -136,7 +152,41 @@ export default async function Sc({ params, searchParams }: Props) {
               esta misma solicitud.
             </p>
             <input type="hidden" name="scId" value={sc.id} />
-            {proveedores.filter((p) => p.activo).length === 0 && (
+            {sugeridos.length > 0 ? (
+              <div className="rounded-lg bg-sky-50 p-3">
+                <p className="font-semibold">Proveedores sugeridos según el historial de compra</p>
+                <table className="mt-1 w-full text-left text-sm">
+                  <thead className="text-slate-600">
+                    <tr>
+                      <th className="py-1">Línea</th>
+                      <th className="py-1">Proveedor</th>
+                      <th className="py-1 text-right">Compras</th>
+                      <th className="py-1 text-right">Último precio neto</th>
+                      <th className="py-1 text-right">Última orden</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sugeridos.map((h) => (
+                      <tr key={`${h.lineaScId}-${h.proveedorId}`} className="border-t border-sky-200">
+                        <td className="py-1">{h.descripcion}</td>
+                        <td className="py-1 font-semibold">{h.proveedor}</td>
+                        <td className="py-1 text-right tabular-nums">{h.compras}</td>
+                        <td className="py-1 text-right tabular-nums">{monto(h.ultimoPrecio, h.moneda, 4)}</td>
+                        <td className="py-1 text-right">
+                          <Link href={`/compras/oc/${h.ultimaOc}`} className="text-marca underline">
+                            {folioOc(h.ultimaOc)}
+                          </Link>{" "}
+                          · {fechaHora(h.ultimaFecha)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-600">Sin historial de compra para estas líneas: todavía no hay proveedores sugeridos.</p>
+            )}
+            {vigentes.length === 0 && (
               <p className="rounded-lg bg-amber-50 px-3 py-2">
                 Primero crea el proveedor en{" "}
                 <Link href="/compras/proveedores" className="text-marca underline">
@@ -152,13 +202,54 @@ export default async function Sc({ params, searchParams }: Props) {
                   <option value="" disabled>
                     Elegir…
                   </option>
-                  {proveedores
-                    .filter((p) => p.activo)
-                    .map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.nombre}
-                      </option>
-                    ))}
+                  {idsSugeridos.length > 0 && (
+                    <optgroup label="Sugeridos por historial">
+                      {vigentes
+                        .filter((p) => idsSugeridos.includes(p.id))
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.nombre}
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
+                  <optgroup label={idsSugeridos.length > 0 ? "Otros proveedores" : "Proveedores"}>
+                    {vigentes
+                      .filter((p) => !idsSugeridos.includes(p.id))
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre}
+                        </option>
+                      ))}
+                  </optgroup>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm font-semibold">
+                Tipo de orden
+                <select name="tipo" defaultValue="NACIONAL" className={campo}>
+                  {Object.entries(TIPOS_OC).map(([valor, nombre]) => (
+                    <option key={valor} value={valor}>
+                      {nombre}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm font-semibold">
+                Incoterm (solo importación)
+                <select name="incoterm" defaultValue="" className={campo}>
+                  <option value="">—</option>
+                  {INCOTERMS.map((i) => (
+                    <option key={i}>{i}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm font-semibold">
+                Vía de embarque (solo importación)
+                <select name="viaEmbarque" defaultValue="" className={campo}>
+                  <option value="">—</option>
+                  {VIAS_EMBARQUE.map((v) => (
+                    <option key={v}>{v}</option>
+                  ))}
                 </select>
               </label>
               <label className="flex flex-col gap-1 text-sm font-semibold">
@@ -235,6 +326,12 @@ export default async function Sc({ params, searchParams }: Props) {
               <input type="checkbox" name="ivaExento" className="size-5" />
               Compra exenta de IVA (IVA 0)
             </label>
+            {sc.tipo !== "SERVICIO" && (
+              <label className="flex items-center gap-2 text-base">
+                <input type="checkbox" name="esCapex" className="size-5" />
+                Es Capex (inversión): se recibe en la bodega Capex y no entra a la valorización del inventario
+              </label>
+            )}
             <label className="flex flex-col gap-1 text-sm font-semibold">
               Cotización del proveedor (opcional; PDF o foto, hasta 10 MB)
               <input type="file" name="cotizacion" accept="application/pdf,image/jpeg,image/png,image/webp" className="text-base font-normal" />

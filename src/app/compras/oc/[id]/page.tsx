@@ -7,13 +7,22 @@ import { AvisoError, botonPrimario, botonSecundario, campo, Dato, tarjeta } from
 import { db } from "@/db";
 import { adjuntos, almacenes, lineasRecepcion, ordenesCompra, recepciones, usuarios } from "@/db/schema";
 import { operaBodega } from "@/lib/bodega-core";
-import { folioOc, folioSc, gestionaCompras, rolDe, ROLES_AUTORIZACION, ROLES_OBLIGATORIOS } from "@/lib/compras-core";
+import { folioOc, folioSc, gestionaCompras, rolDe, ROLES_AUTORIZACION, ROLES_OBLIGATORIOS, TIPOS_OC, visaCompras } from "@/lib/compras-core";
 import { listarAlmacenes } from "@/lib/consultas-bodega";
 import { listarCentros, listarCuentas, listarOc } from "@/lib/consultas-compras";
 import { exigirPerfil } from "@/lib/dal";
 import { cant, monto, pesos } from "@/lib/formato";
 import { fechaHora } from "@/lib/tiempo";
-import { accionAdjuntarCotizacion, accionAnularOc, accionAutorizarOc, accionImputacionOc, accionRecibirOc } from "../../actions";
+import {
+  accionAdjuntarCotizacion,
+  accionAnularOc,
+  accionAutorizarOc,
+  accionCerrarOc,
+  accionConformarServicio,
+  accionEnviadaOc,
+  accionImputacionOc,
+  accionRecibirOc,
+} from "../../actions";
 
 type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; aviso?: string }> };
 
@@ -44,10 +53,22 @@ export default async function Oc({ params, searchParams }: Props) {
   const vigente = oc.estado !== "RECHAZADA" && oc.estado !== "ANULADA";
   const obligatorias = oc.autorizaciones.filter((a) => ROLES_OBLIGATORIOS.includes(a.rol)).length;
   // El gerente general puede firmar aunque la orden ya esté autorizada; los otros dos, solo mientras está emitida.
-  const puedeFirmar = Boolean(miRol) && !yaFirme && (oc.estado === "EMITIDA" || (miRol === "GERENTE_GENERAL" && vigente));
+  const firmo = (rol: string) => oc.autorizaciones.some((a) => a.rol === rol);
+  // Ruta de aprobación en orden: jefe de mantenimiento → gerente de producción → gerente general (opcional).
+  const meToca =
+    miRol === "JEFE_MANTENIMIENTO"
+      ? oc.estado === "EMITIDA"
+      : miRol === "GERENTE_PRODUCCION"
+        ? oc.estado === "EMITIDA" && firmo("JEFE_MANTENIMIENTO")
+        : miRol === "GERENTE_GENERAL" && vigente && firmo("GERENTE_PRODUCCION");
+  const puedeFirmar = Boolean(miRol) && !yaFirme && meToca;
+  const servicio = oc.scTipo === "SERVICIO";
+  const cerrada = Boolean(oc.cerradaEn);
+  const almacenesAptos = listaAlmacenes.filter((a) => a.esCapex === oc.esCapex);
   const gestiona = gestionaCompras(usuario);
   const editable = gestiona && (oc.estado === "EMITIDA" || oc.estado === "AUTORIZADA");
-  const recibible = oc.estado === "AUTORIZADA" || oc.estado === "RECIBIDA_PARCIAL";
+  const recibible = !servicio && !cerrada && (oc.estado === "AUTORIZADA" || oc.estado === "RECIBIDA_PARCIAL");
+  const autorizada = oc.estado === "AUTORIZADA" || oc.estado === "RECIBIDA_PARCIAL" || oc.estado === "RECIBIDA_TOTAL";
   const m = (n: number, dec = 2) => monto(n, oc.moneda, dec);
   return (
     <>
@@ -56,7 +77,7 @@ export default async function Oc({ params, searchParams }: Props) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold">Orden de compra {folioOc(oc.id)}</h1>
-            <ChipOc estado={oc.estado} />
+            <ChipOc estado={oc.estado} cerrada={cerrada} />
           </div>
           <Link href={`/compras/oc/${oc.id}/imprimir`} className={botonSecundario}>
             {oc.codigoVerificacion ? "Imprimir o guardar en PDF" : "Imprimir borrador"}
@@ -73,6 +94,14 @@ export default async function Oc({ params, searchParams }: Props) {
         <section className={`${tarjeta} flex flex-col gap-4`}>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <Dato etiqueta="Proveedor">{oc.proveedor}</Dato>
+            <Dato etiqueta="Tipo de orden">
+              {TIPOS_OC[oc.tipo]}
+              {servicio ? " · Servicio" : ""}
+              {oc.esCapex ? " · Capex" : ""}
+            </Dato>
+            {oc.tipo === "IMPORTACION" && <Dato etiqueta="Incoterm">{oc.incoterm ?? "—"}</Dato>}
+            {oc.tipo === "IMPORTACION" && <Dato etiqueta="Vía de embarque">{oc.viaEmbarque ?? "—"}</Dato>}
+            <Dato etiqueta="Enviada al proveedor">{oc.enviadaEn ? fechaHora(oc.enviadaEn) : "Todavía no"}</Dato>
             <Dato etiqueta="Emitida">
               {fechaHora(oc.emitidaEn)} · {oc.emisor}
             </Dato>
@@ -192,7 +221,8 @@ export default async function Oc({ params, searchParams }: Props) {
         </section>
 
         <section className={`${tarjeta} flex flex-col gap-3`}>
-          <h2 className="text-lg font-bold">Autorizaciones · {obligatorias} de 2 obligatorias</h2>
+          <h2 className="text-lg font-bold">Ruta de aprobación · {obligatorias} de 2 obligatorias</h2>
+          <p className="text-sm text-slate-600">Se firma en este orden: jefe de mantenimiento, gerente de producción y gerente general.</p>
           <div className="grid gap-3 sm:grid-cols-3">
             {(Object.keys(ROLES_AUTORIZACION) as (keyof typeof ROLES_AUTORIZACION)[]).map((rol) => {
               const a = oc.autorizaciones.find((x) => x.rol === rol);
@@ -233,8 +263,44 @@ export default async function Oc({ params, searchParams }: Props) {
             </form>
           )}
           {oc.estado === "EMITIDA" && yaFirme && <p className="text-slate-700">Ya autorizaste esta orden.</p>}
+          {miRol && !yaFirme && !meToca && vigente && (miRol !== "JEFE_MANTENIMIENTO") && (
+            <p className="text-slate-700">Todavía no te toca firmar: falta la firma anterior de la ruta de aprobación.</p>
+          )}
           {oc.estado === "EMITIDA" && !miRol && <p className="text-slate-700">Sin las dos autorizaciones obligatorias, la orden no admite recepciones y solo se imprime como borrador.</p>}
         </section>
+
+        {gestiona && autorizada && !oc.enviadaEn && !cerrada && (
+          <form action={accionEnviadaOc} className={`${tarjeta} flex flex-wrap items-center justify-between gap-3`}>
+            <input type="hidden" name="id" value={oc.id} />
+            <p>La orden completó su ruta de aprobación. Cuando la envíes al proveedor, déjalo registrado.</p>
+            <button className={botonSecundario}>Marcar como enviada al proveedor</button>
+          </form>
+        )}
+
+        {servicio && vigente && (
+          <section className={`${tarjeta} flex flex-col gap-3`}>
+            <h2 className="text-lg font-bold">Factura del servicio</h2>
+            {oc.conformeEn ? (
+              <p>
+                Factura <b>{oc.facturaServicio}</b> firmada por {oc.conforme} · {fechaHora(oc.conformeEn)}
+              </p>
+            ) : oc.estado !== "AUTORIZADA" ? (
+              <p className="text-slate-700">Una orden de servicio no se recibe en bodega: una vez autorizada, el jefe de área firma la factura del proveedor.</p>
+            ) : visaCompras(usuario) ? (
+              <form action={accionConformarServicio} className="flex flex-col gap-3">
+                <input type="hidden" name="id" value={oc.id} />
+                <p>Al firmar declaras que el servicio se recibió conforme. Queda registrado tu nombre, la fecha y la hora.</p>
+                <label className="flex flex-col gap-1 text-sm font-semibold">
+                  Número de la factura del proveedor
+                  <input name="factura" required className={campo} />
+                </label>
+                <button className={botonPrimario}>Firmar la factura</button>
+              </form>
+            ) : (
+              <p className="rounded-lg bg-amber-50 px-3 py-2">Pendiente: falta que el jefe de área firme la factura del proveedor.</p>
+            )}
+          </section>
+        )}
 
         {recibible && operaBodega(usuario) && (
           <form action={accionRecibirOc} className={`${tarjeta} flex flex-col gap-3`}>
@@ -244,7 +310,7 @@ export default async function Oc({ params, searchParams }: Props) {
               <label className="flex flex-col gap-1 text-sm font-semibold">
                 Almacén que recibe
                 <select name="almacenId" required className={campo}>
-                  {listaAlmacenes.map((a) => (
+                  {almacenesAptos.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.nombre}
                     </option>
@@ -280,7 +346,9 @@ export default async function Oc({ params, searchParams }: Props) {
                 ))}
             </div>
             <p className="text-sm text-slate-600">
-              Deja vacío lo que no llegó. Lo recibido entra a existencias valorizado en pesos y actualiza el costo medio.
+              {oc.esCapex
+                ? "Deja vacío lo que no llegó. Orden Capex: lo recibido entra a la bodega Capex con su costo, sin cambiar el costo medio ni la valorización del inventario."
+                : "Deja vacío lo que no llegó. Lo recibido entra a existencias valorizado en pesos y actualiza el costo medio."}
             </p>
             <button type="submit" className={botonPrimario}>
               Registrar recepción
@@ -308,6 +376,28 @@ export default async function Oc({ params, searchParams }: Props) {
               </div>
             ))}
           </section>
+        )}
+
+        {cerrada && (
+          <p className={tarjeta}>
+            Orden cerrada por abastecimiento · {fechaHora(oc.cerradaEn!)}
+            {oc.notaCierre ? ` · ${oc.notaCierre}` : ""}
+          </p>
+        )}
+        {gestiona && !cerrada && (oc.estado === "RECIBIDA_TOTAL" || oc.estado === "RECIBIDA_PARCIAL") && (
+          <form action={accionCerrarOc} className={`${tarjeta} flex flex-col gap-3`}>
+            <h2 className="text-lg font-bold">Cerrar la orden</h2>
+            <input type="hidden" name="id" value={oc.id} />
+            {oc.estado === "RECIBIDA_PARCIAL" ? (
+              <label className="flex flex-col gap-1 text-sm font-semibold">
+                La orden tiene saldo por recibir. Explica por qué se cierra así (obligatorio)
+                <input name="nota" required className={campo} />
+              </label>
+            ) : (
+              <p>{servicio ? "La factura del servicio ya está firmada." : "Todo lo pedido ya ingresó a bodega."} Al cerrarla, la orden queda terminada.</p>
+            )}
+            <button className={botonPrimario}>Cerrar la orden</button>
+          </form>
         )}
 
         {editable && (

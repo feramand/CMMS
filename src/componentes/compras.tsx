@@ -27,13 +27,14 @@ export function MenuCompras({ actual }: { actual: string }) {
 }
 
 const TONO_OC = { EMITIDA: "ambar", AUTORIZADA: "azul", RECIBIDA_PARCIAL: "azul", RECIBIDA_TOTAL: "verde", RECHAZADA: "rojo", ANULADA: "gris" } as const;
-export function ChipOc({ estado }: { estado: EstadoOc }) {
+export function ChipOc({ estado, cerrada }: { estado: EstadoOc; cerrada?: boolean }) {
+  if (cerrada) return <Chip tono="gris">Cerrada</Chip>;
   return <Chip tono={TONO_OC[estado]}>{ESTADOS_OC[estado]}</Chip>;
 }
 
 const SC = {
-  ENVIADA: ["Por visar", "ambar"],
-  APROBADA: ["Visada, con líneas por comprar", "azul"],
+  ENVIADA: ["Presolicitud por aprobar", "ambar"],
+  APROBADA: ["Aprobada, con líneas por comprar", "azul"],
   CONVERTIDA: ["Con orden de compra", "verde"],
   RECHAZADA: ["Rechazada", "rojo"],
 } as const;

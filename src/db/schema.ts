@@ -611,6 +611,8 @@ export const repuestosActivo = pgTable(
 export const almacenes = pgTable("almacenes", {
   id: serial("id").primaryKey(),
   nombre: text("nombre").notNull().unique(),
+  // Bodega aparte para compras Capex: guarda cantidad y costo, pero no entra a la valorización del inventario.
+  esCapex: boolean("es_capex").notNull().default(false),
   activo: boolean("activo").notNull().default(true),
 });
 
@@ -727,8 +729,20 @@ export const proveedores = pgTable("proveedores", {
 
 export const estadoScEnum = pgEnum("estado_sc", ["ENVIADA", "APROBADA", "CONVERTIDA", "RECHAZADA"]);
 
+// Qué se compra: repuestos del catálogo de bodega, repuestos o consumibles sin código de inventario, o servicios.
+export const tipoScEnum = pgEnum("tipo_sc", ["INVENTARIO", "SIN_CODIGO", "SERVICIO"]);
+export type TipoSc = (typeof tipoScEnum.enumValues)[number];
+// De dónde nace: de un repuesto pedido en una OT sin existencias, del stock mínimo (automática) o a mano.
+export const origenScEnum = pgEnum("origen_sc", ["OT", "STOCK_MINIMO", "MANUAL"]);
+export type OrigenSc = (typeof origenScEnum.enumValues)[number];
+export const tipoOcEnum = pgEnum("tipo_oc", ["NACIONAL", "IMPORTACION"]);
+export type TipoOc = (typeof tipoOcEnum.enumValues)[number];
+
+// Mientras está ENVIADA es una presolicitud (PSC); aprobada, pasa a ser la solicitud de compra (SC).
 export const solicitudesCompra = pgTable("solicitudes_compra", {
   id: serial("id").primaryKey(),
+  tipo: tipoScEnum("tipo").notNull().default("INVENTARIO"),
+  origen: origenScEnum("origen").notNull().default("MANUAL"),
   solicitanteId: integer("solicitante_id")
     .notNull()
     .references(() => usuarios.id),
@@ -778,6 +792,22 @@ export const ordenesCompra = pgTable("ordenes_compra", {
     .references(() => proveedores.id),
   moneda: monedaEnum("moneda").notNull().default("CLP"),
   estado: estadoOcEnum("estado").notNull().default("EMITIDA"),
+  tipo: tipoOcEnum("tipo").notNull().default("NACIONAL"),
+  // Solo en importaciones.
+  incoterm: text("incoterm"),
+  viaEmbarque: text("via_embarque"),
+  // Inversión: se recibe en la bodega Capex y no entra a la valorización del inventario.
+  esCapex: boolean("es_capex").notNull().default(false),
+  // Abastecimiento la envió al proveedor.
+  enviadaEn: timestamp("enviada_en", { withTimezone: true }),
+  // OC de servicio: el jefe de área firma la factura del proveedor en vez de recibir en bodega.
+  facturaServicio: text("factura_servicio"),
+  conformePor: integer("conforme_por").references(() => usuarios.id),
+  conformeEn: timestamp("conforme_en", { withTimezone: true }),
+  // Abastecimiento cerró la orden: ya no admite recepciones.
+  cerradaPor: integer("cerrada_por").references(() => usuarios.id),
+  cerradaEn: timestamp("cerrada_en", { withTimezone: true }),
+  notaCierre: text("nota_cierre"),
   centroCostoId: integer("centro_costo_id").references(() => centrosCosto.id),
   cuentaId: integer("cuenta_id").references(() => cuentasContables.id),
   ivaExento: boolean("iva_exento").notNull().default(false),

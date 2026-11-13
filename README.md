@@ -5,7 +5,7 @@ Aplicación web adaptable (computador y celular) que se instala en un servidor d
 
 ## Estado
 
-Las etapas 0 a 5 están programadas y probadas con 175 pruebas automáticas. Falta probarlas
+Las etapas 0 a 5 están programadas y probadas con 182 pruebas automáticas. Falta probarlas
 con datos reales en el servidor de la empresa.
 
 | Etapa | Contenido | Estado |

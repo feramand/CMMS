@@ -98,9 +98,9 @@ describe.skipIf(!url)("bodega (integración)", () => {
   const avisos = async (usuarioId: number) =>
     (await db.select().from(schema.notificaciones).where(eq(schema.notificaciones.usuarioId, usuarioId))).map((n) => n.mensaje);
 
-  it("la migración crea la bodega central y los dos pañoles", async () => {
+  it("la migración crea la bodega central, los dos pañoles y la bodega Capex", async () => {
     const nombres = (await db.select().from(schema.almacenes)).map((a) => a.nombre).sort();
-    expect(nombres).toEqual(["Bodega central", "Pañol eléctrico", "Pañol mecánico"]);
+    expect(nombres).toEqual(["Bodega Capex", "Bodega central", "Pañol eléctrico", "Pañol mecánico"]);
   });
 
   it("catálogo: el código queda en mayúsculas, no se repite y solo lo modifican bodega y abastecimiento", async () => {
@@ -142,7 +142,11 @@ describe.skipIf(!url)("bodega (integración)", () => {
     expect(await avisos(bodeguero.id)).toEqual([]); // 4 no está bajo el mínimo de 4
     await registrarSalida(db, bodeguero, { repuestoId: id, almacenId: central, cantidad: 1, otId: ot });
     expect(await avisos(abastecimiento.id)).toEqual(["Stock bajo el mínimo: ROD-6204 Rodamiento 6204 (quedan 3 unidad, mínimo 4)"]);
-    expect(await avisos(bodeguero.id)).toHaveLength(1);
+    // Además del aviso, nace sola la presolicitud de compra, que aprueba el encargado de bodega.
+    expect(await avisos(bodeguero.id)).toEqual([
+      "Presolicitud automática PSC-00001 por stock mínimo: falta tu aprobación",
+      "Stock bajo el mínimo: ROD-6204 Rodamiento 6204 (quedan 3 unidad, mínimo 4)",
+    ]);
     // Ya estaba bajo el mínimo: no se repite el aviso.
     await registrarSalida(db, bodeguero, { repuestoId: id, almacenId: central, cantidad: 1, otId: ot });
     expect(await avisos(abastecimiento.id)).toHaveLength(1);
@@ -186,17 +190,18 @@ describe.skipIf(!url)("bodega (integración)", () => {
     const fila = async () => (await db.select().from(schema.solicitudesRepuesto).where(eq(schema.solicitudesRepuesto.id, sol)))[0];
     const { scId } = await entregarSolicitud(db, bodeguero, sol, { repuestoId: id, almacenId: panol, cantidad: 2, pedirResto: true });
     expect(await fila()).toMatchObject({ estado: "PENDIENTE", entregada: 2, scId });
-    const [sc] = await db.select().from(schema.solicitudesCompra);
-    expect(sc).toMatchObject({ id: scId, estado: "ENVIADA", solicitanteId: bodeguero.id });
+    // La entrega dejó el repuesto bajo el mínimo: además de la presolicitud por la OT, existe la automática.
+    const [sc] = await db.select().from(schema.solicitudesCompra).where(eq(schema.solicitudesCompra.origen, "OT"));
+    expect(sc).toMatchObject({ id: scId, estado: "ENVIADA", solicitanteId: bodeguero.id, tipo: "INVENTARIO" });
     expect(sc.nota).toContain(`OT ${ot.folio}`);
-    expect((await db.select().from(schema.lineasSc))[0]).toMatchObject({ repuestoId: id, cantidad: 3 });
+    expect((await db.select().from(schema.lineasSc).where(eq(schema.lineasSc.scId, scId!)))[0]).toMatchObject({ repuestoId: id, cantidad: 3 });
     expect(await avisos(tecnico.id)).toContain("Repuesto entregado en parte (2 de 5): Rodamiento 6204. El resto está en compra.");
-    expect(await avisos(jefe.id)).toContain("Solicitud de compra SC-00001 de Bodeguero por visar");
+    expect(await avisos(jefe.id)).toContain(`Presolicitud de compra PSC-0000${scId} de Bodeguero por aprobar`);
     // Llega la compra: se entrega lo que faltaba y la solicitud se cierra. No se crea otra SC.
     await registrarEntrada(db, bodeguero, { repuestoId: id, almacenId: panol, cantidad: 3, costoUnitario: 500 });
     await entregarSolicitud(db, bodeguero, sol, { repuestoId: id, almacenId: panol, cantidad: 3, pedirResto: true });
     expect(await fila()).toMatchObject({ estado: "ENTREGADA", entregada: 5 });
-    expect(await db.select().from(schema.solicitudesCompra)).toHaveLength(1);
+    expect(await db.select().from(schema.solicitudesCompra).where(eq(schema.solicitudesCompra.origen, "OT"))).toHaveLength(1);
     // Parcial sin pedir el resto: se cierra con lo entregado.
     await registrarEntrada(db, bodeguero, { repuestoId: id, almacenId: panol, cantidad: 1, costoUnitario: 500 });
     const corta = await solicitarRepuesto(db, tecnico, { otId: ot.id, cantidad: 4, descripcion: "Rodamiento 6204", repuestoId: id });
@@ -207,7 +212,7 @@ describe.skipIf(!url)("bodega (integración)", () => {
     await expect(pedirCompraDeSolicitud(db, tecnico, nada)).rejects.toThrow("Solo bodega");
     const sc2 = await pedirCompraDeSolicitud(db, bodeguero, nada);
     expect((await db.select().from(schema.lineasSc).where(eq(schema.lineasSc.scId, sc2)))[0]).toMatchObject({ repuestoId: null, descripcion: "Correa especial · XPZ-1000", cantidad: 2 });
-    await expect(pedirCompraDeSolicitud(db, bodeguero, nada)).rejects.toThrow("ya está pedido en la solicitud de compra SC-00002");
+    await expect(pedirCompraDeSolicitud(db, bodeguero, nada)).rejects.toThrow(`ya está pedido en la solicitud de compra SC-0000${sc2}`);
   });
 
   it("devolución: vuelve a existencias sin cambiar el costo, y no más de lo entregado a la OT", async () => {
