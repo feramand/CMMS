@@ -33,10 +33,18 @@ services:
       ADMIN_CLAVE: ${ADMIN_CLAVE:-}
       URL_PUBLICA: ${URL_PUBLICA:-}
       METRICS_API_KEY: ${METRICS_API_KEY:-}
+      # Datos de la empresa impresos en las órdenes de compra.
+      EMPRESA_NOMBRE: ${EMPRESA_NOMBRE:-}
+      EMPRESA_RUT: ${EMPRESA_RUT:-}
+      EMPRESA_DIRECCION: ${EMPRESA_DIRECCION:-}
+      EMPRESA_FONO: ${EMPRESA_FONO:-}
+      EMPRESA_LOGO: ${EMPRESA_LOGO:-}
       ADJUNTOS_DIR: /datos/adjuntos
       TZ: America/Santiago
     volumes:
       - cmms_adjuntos:/datos/adjuntos
+      # Carpeta junto a este archivo con el logo de la empresa (ver EMPRESA_LOGO en .env.example).
+      - ./empresa:/datos/empresa:ro
     ports:
       # HTTPS lo entrega el proxy inverso de TI delante de este puerto.
       - "127.0.0.1:3000:3000"

@@ -4,6 +4,8 @@ export const EMPRESA = {
   rut: process.env.EMPRESA_RUT || null,
   direccion: process.env.EMPRESA_DIRECCION || null,
   fono: process.env.EMPRESA_FONO || null,
+  /** Ruta en el servidor de la imagen del logo (PNG, JPG o WebP). Sin ella, la orden sale solo con el nombre. */
+  logo: process.env.EMPRESA_LOGO || null,
   /** Nota fija al pie de cada orden de compra. */
   nota:
     process.env.EMPRESA_NOTA_OC ||

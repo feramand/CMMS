@@ -45,7 +45,9 @@ export default async function ImprimirOc({ params }: { params: Promise<{ id: str
           {marca}
         </p>
       )}
-      <header className="text-center">
+      <header className="relative text-center">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        {EMPRESA.logo && <img src="/logo-empresa" alt="" className="absolute top-0 left-0 h-16" />}
         <p className="text-xl font-semibold">{EMPRESA.nombre}</p>
         {EMPRESA.direccion && <p>{EMPRESA.direccion}</p>}
         {EMPRESA.fono && <p>Fono: {EMPRESA.fono}</p>}
