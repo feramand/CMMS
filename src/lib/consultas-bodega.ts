@@ -21,6 +21,7 @@ export type FilaExistencia = {
   id: number;
   codigo: string;
   codigoFabricante: string | null;
+  sinCodigoFabricante: boolean;
   marca: string | null;
   cuentaId: number | null;
   descripcion: string;

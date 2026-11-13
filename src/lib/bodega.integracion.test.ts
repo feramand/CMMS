@@ -91,7 +91,7 @@ describe.skipIf(!url)("bodega (integración)", () => {
   });
 
   const rodamiento = () =>
-    crearRepuesto(db, bodeguero, { codigo: "rod-6204", descripcion: "Rodamiento 6204", stockMinimo: 4, stockMaximo: 12 });
+    crearRepuesto(db, bodeguero, { codigo: "rod-6204", descripcion: "Rodamiento 6204", stockMinimo: 4, stockMaximo: 12, sinCodigoFabricante: true });
   const stock = async (repuestoId: number, almacenId: number) =>
     (await db.select().from(schema.existencias)).find((e) => e.repuestoId === repuestoId && e.almacenId === almacenId)?.cantidad ?? 0;
   const costo = async (id: number) => (await db.select().from(schema.repuestos).where(eq(schema.repuestos.id, id)))[0].costoMedio;
@@ -110,7 +110,7 @@ describe.skipIf(!url)("bodega (integración)", () => {
     await expect(crearRepuesto(db, tecnico, { codigo: "X", descripcion: "x" })).rejects.toThrow("Solo bodega y abastecimiento");
     await expect(crearRepuesto(db, jefe, { codigo: "X", descripcion: "x" })).rejects.toThrow("Solo bodega y abastecimiento");
     await expect(crearRepuesto(db, bodeguero, { codigo: "X", descripcion: "x", stockMinimo: 5, stockMaximo: 2 })).rejects.toThrow("máximo");
-    await actualizarRepuesto(db, abastecimiento, id, { codigo: "ROD-6204", descripcion: "Rodamiento 6204 2RS", activoIds: [activoId] });
+    await actualizarRepuesto(db, abastecimiento, id, { codigo: "ROD-6204", descripcion: "Rodamiento 6204 2RS", activoIds: [activoId], sinCodigoFabricante: true });
     expect(await db.select().from(schema.repuestosActivo)).toEqual([{ repuestoId: id, activoId }]);
   });
 
@@ -249,16 +249,16 @@ describe.skipIf(!url)("bodega (integración)", () => {
   it("no se da de baja un repuesto con existencias", async () => {
     const id = await rodamiento();
     await registrarEntrada(db, bodeguero, { repuestoId: id, almacenId: central, cantidad: 1 });
-    await expect(actualizarRepuesto(db, bodeguero, id, { codigo: "ROD-6204", descripcion: "x", activo: false })).rejects.toThrow("todavía tiene existencias");
+    await expect(actualizarRepuesto(db, bodeguero, id, { codigo: "ROD-6204", descripcion: "x", activo: false, sinCodigoFabricante: true })).rejects.toThrow("todavía tiene existencias");
     await registrarAjuste(db, bodeguero, { repuestoId: id, almacenId: central, cantidadReal: 0, nota: "Obsoleto" });
-    await actualizarRepuesto(db, bodeguero, id, { codigo: "ROD-6204", descripcion: "x", activo: false });
+    await actualizarRepuesto(db, bodeguero, id, { codigo: "ROD-6204", descripcion: "x", activo: false, sinCodigoFabricante: true });
     await expect(registrarEntrada(db, bodeguero, { repuestoId: id, almacenId: central, cantidad: 1 })).rejects.toThrow("dado de baja");
   });
 
   it("inventario: las diferencias se ajustan al cerrar y lo movido durante el conteo se conserva", async () => {
     const a = await rodamiento();
-    const b = await crearRepuesto(db, bodeguero, { codigo: "COR-01", descripcion: "Correa" });
-    const c = await crearRepuesto(db, bodeguero, { codigo: "FUS-10", descripcion: "Fusible 10 A" });
+    const b = await crearRepuesto(db, bodeguero, { codigo: "COR-01", descripcion: "Correa", sinCodigoFabricante: true });
+    const c = await crearRepuesto(db, bodeguero, { codigo: "FUS-10", descripcion: "Fusible 10 A", sinCodigoFabricante: true });
     await registrarEntrada(db, bodeguero, { repuestoId: a, almacenId: central, cantidad: 10, costoUnitario: 1000 });
     await registrarEntrada(db, bodeguero, { repuestoId: b, almacenId: central, cantidad: 5, costoUnitario: 800 });
     const toma = await abrirToma(db, bodeguero, central);
@@ -282,10 +282,10 @@ describe.skipIf(!url)("bodega (integración)", () => {
 
   it("carga desde Excel: catálogo y existencias iniciales, todo o nada", async () => {
     const filas: Record<string, string>[] = [
-      { codigo: "rod-6204", descripcion: "Rodamiento 6204", stockMinimo: "4", costo: "3500", almacen: "bodega central", existencia: "10", ubicacion: "A-3" },
-      { codigo: "ROD-6204", descripcion: "Rodamiento 6204", stockMinimo: "4", costo: "3500", almacen: "Pañol mecánico", existencia: "2" },
-      { codigo: "ACE-68", descripcion: "Aceite hidráulico 68", marca: " Shell ", unidad: "Litro", costo: "2.100,5", almacen: "Bodega central", existencia: "37,5" },
-      { codigo: "FUS-10", descripcion: "Fusible 10 A" },
+      { codigo: "rod-6204", descripcion: "Rodamiento 6204", codigoFabricante: "6204-2RSH", stockMinimo: "4", costo: "3500", almacen: "bodega central", existencia: "10", ubicacion: "A-3" },
+      { codigo: "ROD-6204", descripcion: "Rodamiento 6204", codigoFabricante: "6204-2RSH", stockMinimo: "4", costo: "3500", almacen: "Pañol mecánico", existencia: "2" },
+      { codigo: "ACE-68", descripcion: "Aceite hidráulico 68", codigoFabricante: "Sin código", marca: " Shell ", unidad: "Litro", costo: "2.100,5", almacen: "Bodega central", existencia: "37,5" },
+      { codigo: "FUS-10", descripcion: "Fusible 10 A", codigoFabricante: "S/C" },
     ];
     expect(await importarRepuestos(db, bodeguero, filas)).toBe(4);
     const cat = await db.select().from(schema.repuestos).orderBy(schema.repuestos.codigo);
@@ -304,13 +304,22 @@ describe.skipIf(!url)("bodega (integración)", () => {
     expect((error as ErrorDeCarga).errores[0]).toBe("Fila 2: ROD-6204 ya tiene movimientos en Bodega central; su existencia se corrige con un ajuste.");
     expect(await stock(rod, central)).toBe(10);
     // Sin existencias, la planilla sirve para actualizar el catálogo.
-    await importarRepuestos(db, bodeguero, [{ codigo: "FUS-10", descripcion: "Fusible cerámico 10 A", stockMinimo: "20" }]);
+    await importarRepuestos(db, bodeguero, [{ codigo: "FUS-10", descripcion: "Fusible cerámico 10 A", codigoFabricante: "sin codigo", stockMinimo: "20" }]);
     expect((await db.select().from(schema.repuestos).where(eq(schema.repuestos.codigo, "FUS-10")))[0]).toMatchObject({ descripcion: "Fusible cerámico 10 A", stockMinimo: 20 });
     const malo = await importarRepuestos(db, bodeguero, [
-      { codigo: "A-1", descripcion: "a", almacen: "Bodega norte", existencia: "1" },
-      { codigo: "A-2", descripcion: "b", stockMinimo: "muchos" },
+      { codigo: "A-1", descripcion: "a", codigoFabricante: "P-1", almacen: "Bodega norte", existencia: "1" },
+      { codigo: "A-2", descripcion: "b", codigoFabricante: "P-2", stockMinimo: "muchos" },
+      { codigo: "A-3", descripcion: "c" },
     ]).catch((e) => e);
-    expect((malo as ErrorDeCarga).errores).toEqual(['Fila 2: no existe el almacén "Bodega norte".', 'Fila 3: "Stock mínimo" debe ser un número.']);
-    expect(await db.select().from(schema.repuestos)).toHaveLength(3);
+    expect((malo as ErrorDeCarga).errores).toEqual(['Fila 2: no existe el almacén "Bodega norte".', 'Fila 3: "Stock mínimo" debe ser un número.', 'Fila 4: falta "Código de fabricante".']);
+    // El código de fabricante es obligatorio; la única salida es declarar que el repuesto no tiene.
+    await expect(crearRepuesto(db, bodeguero, { codigo: "CAB-01", descripcion: "Cable genérico" })).rejects.toThrow("Falta el código de fabricante");
+    const generico = await crearRepuesto(db, bodeguero, { codigo: "CAB-01", descripcion: "Cable genérico", sinCodigoFabricante: true });
+    const conCodigo = await crearRepuesto(db, bodeguero, { codigo: "CAB-02", descripcion: "Cable Lapp", codigoFabricante: " 1119304 ", sinCodigoFabricante: true });
+    const catalogo = await db.select().from(schema.repuestos);
+    expect(catalogo.find((r) => r.id === generico)).toMatchObject({ codigoFabricante: null, sinCodigoFabricante: true });
+    expect(catalogo.find((r) => r.id === conCodigo)).toMatchObject({ codigoFabricante: "1119304", sinCodigoFabricante: false });
+    expect(catalogo.filter((r) => r.codigo === "ACE-68" || r.codigo === "FUS-10").map((r) => [r.codigoFabricante, r.sinCodigoFabricante])).toEqual([[null, true], [null, true]]);
+    expect(await db.select().from(schema.repuestos)).toHaveLength(5);
   });
 });

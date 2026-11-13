@@ -43,14 +43,16 @@ export type ResumenCartilla = { cartillas: { nombre: string; tareas: number; int
 /**
  * Crea las cartillas de una máquina a partir de la planilla. Reglas:
  * - La columna PAUTA separa las cartillas. Una pauta escrita con las letras de otras
- *   (por ejemplo "AB" cuando existen "A" y "B") pone la tarea en cada una de ellas.
+ *   (por ejemplo "AB" cuando existen "A" y "B") indica una cartilla que se alterna: "Pauta A/B" hace
+ *   una vuelta las tareas A y a la siguiente las B; las tareas "AB" van en todas las vueltas. Esa cartilla
+ *   se mide por tiempo (su FRECUENCIA), aunque la planilla traiga equivalencia en giros.
  * - Con «Equivalencia Giros» la cartilla se mide por el contador de la máquina; sin ella,
  *   por tiempo según la FRECUENCIA. Ninguna de las dos columnas se muestra a quien ejecuta.
  * - ENCARGADO puede nombrar dos grupos separados por "/" ("Operador/Mecánico"): cualquiera la marca.
  * - Las filas sin código y sin pauta (títulos, totalizador, pie de firma) se ignoran.
  * - Todo o nada: si una fila tiene un error no se crea ninguna cartilla.
  */
-export async function importarCartilla(db: DB, actor: UsuarioSesion, activoId: number, filas: Fila[]): Promise<ResumenCartilla> {
+export async function importarCartilla(db: DB, actor: UsuarioSesion, activoId: number, filas: Fila[], ahora = new Date()): Promise<ResumenCartilla> {
   if (actor.perfil !== "ADMINISTRADOR" && actor.perfil !== "JEFE_PLANIFICADOR") {
     throw new ErrorDeNegocio("No tienes permiso para cargar cartillas.");
   }
@@ -68,12 +70,31 @@ export async function importarCartilla(db: DB, actor: UsuarioSesion, activoId: n
 
   const errores: string[] = [];
   const etiquetas = [...new Set(datos.map((f) => (f.pauta ?? "").trim().toUpperCase()).filter(Boolean))];
-  // "AB" es A y B cuando ambas existen como pautas propias.
-  const simples = etiquetas.filter((e) => !(e.length > 1 && [...e].every((letra) => etiquetas.includes(letra))));
-  const pautasDe = (etiqueta: string) => (simples.includes(etiqueta) ? [etiqueta] : [...etiqueta]);
+  // "AB" junto a "A" y "B": una sola cartilla que se alterna. Una vuelta se hace la A y a la siguiente la B;
+  // las tareas "AB" van en todas las vueltas.
+  const compuestas = etiquetas
+    .filter((e) => e.length > 1 && [...e].every((letra) => etiquetas.includes(letra)))
+    .sort((x, y) => y.length - x.length);
+  const grupoDeLetra = new Map<string, string>();
+  for (const c of compuestas) {
+    if ([...c].every((letra) => !grupoDeLetra.has(letra))) for (const letra of c) grupoDeLetra.set(letra, c);
+  }
+  /** Cartilla a la que va una etiqueta y, si se alterna, en qué vuelta. null = combinación que no se puede cargar. */
+  const destino = (etiqueta: string): { clave: string; variante: string | null } | null => {
+    if (compuestas.includes(etiqueta)) return grupoDeLetra.get(etiqueta[0]) === etiqueta ? { clave: etiqueta, variante: null } : null;
+    const grupo = grupoDeLetra.get(etiqueta);
+    return grupo ? { clave: grupo, variante: etiqueta } : { clave: etiqueta, variante: null };
+  };
 
-  type Grupo = { etiqueta: string; frecuencia: string; equivalencia: number | null; tareas: TareaDatos[]; filas: Fila[] };
-  const grupos = new Map<string, Grupo>(simples.map((e) => [e, { etiqueta: e, frecuencia: "", equivalencia: null, tareas: [], filas: [] }]));
+  type Grupo = { etiqueta: string; alterna: boolean; frecuencia: string; equivalencia: number | null; tareas: TareaDatos[]; filas: Fila[] };
+  const grupos = new Map<string, Grupo>();
+  for (const e of etiquetas) {
+    const d = destino(e);
+    if (d && !grupos.has(d.clave)) {
+      const alterna = compuestas.includes(d.clave);
+      grupos.set(d.clave, { etiqueta: alterna ? [...d.clave].join("/") : d.clave, alterna, frecuencia: "", equivalencia: null, tareas: [], filas: [] });
+    }
+  }
   const codigos = new Set<string>();
   for (const f of datos) {
     const n = f._fila ?? "?";
@@ -112,16 +133,19 @@ export async function importarCartilla(db: DB, actor: UsuarioSesion, activoId: n
       operador: encargados.some((g) => g!.operador),
       especialidadId: encargados.find((g) => g!.especialidadId !== null)?.especialidadId ?? null,
     };
-    for (const etiqueta of pautasDe(f.pauta.trim().toUpperCase())) {
-      const g = grupos.get(etiqueta)!;
-      g.tareas.push(tarea);
-      g.filas.push(f);
+    const d = destino(f.pauta.trim().toUpperCase());
+    if (!d) {
+      errores.push(`Fila ${n}: la pauta "${f.pauta}" mezcla cartillas que ya se alternan en otro grupo. Usa una sola combinación (por ejemplo A, B y AB).`);
+      continue;
     }
+    const g = grupos.get(d.clave)!;
+    g.tareas.push({ ...tarea, variante: d.variante });
+    g.filas.push(f);
   }
 
-  // Frecuencia y equivalencia de cada cartilla: deben coincidir en todas sus tareas propias.
+  // Frecuencia y equivalencia de cada cartilla: deben coincidir en todas sus tareas.
   for (const g of grupos.values()) {
-    const propias = g.filas.filter((f) => f.pauta.trim().toUpperCase() === g.etiqueta);
+    const propias = g.filas;
     const frecuencias = [...new Set(propias.map((f) => (f.frecuencia ?? "").trim()).filter(Boolean))];
     const equivalencias = [...new Set(propias.map((f) => (f.equivalencia ?? "").trim()).filter(Boolean))];
     if (frecuencias.length > 1 || equivalencias.length > 1) {
@@ -129,7 +153,10 @@ export async function importarCartilla(db: DB, actor: UsuarioSesion, activoId: n
       continue;
     }
     g.frecuencia = frecuencias[0] ?? "";
-    if (equivalencias[0]) {
+    // La cartilla que se alterna es la de menor intervalo: se mide por tiempo si su frecuencia se reconoce.
+    if (g.alterna && DIAS_FRECUENCIA[normalizar(g.frecuencia)]) {
+      g.equivalencia = null;
+    } else if (equivalencias[0]) {
       g.equivalencia = entero(equivalencias[0]);
       if (!g.equivalencia) errores.push(`Pauta ${g.etiqueta}: la equivalencia en giros debe ser un número entero mayor que cero (dice "${equivalencias[0]}").`);
     } else if (!DIAS_FRECUENCIA[normalizar(g.frecuencia)]) {
@@ -162,7 +189,7 @@ export async function importarCartilla(db: DB, actor: UsuarioSesion, activoId: n
         especialidadId: responsable,
         frecuencia: g.frecuencia,
         tareas: g.tareas,
-      });
+      }, ahora);
       resumen.cartillas.push({
         nombre: `Pauta ${g.etiqueta}`,
         tareas: g.tareas.length,

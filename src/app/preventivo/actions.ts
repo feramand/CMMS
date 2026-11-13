@@ -61,7 +61,7 @@ export async function accionAgregarActividad(formData: FormData) {
   const actor = await exigirSesion();
   const pautaId = entero(formData.get("pautaId"));
   await ejecutar(`/admin/preventivo/${pautaId}`, () =>
-    agregarActividad(db, actor, pautaId, texto(formData.get("descripcion")), texto(formData.get("grupo"))),
+    agregarActividad(db, actor, pautaId, texto(formData.get("descripcion")), texto(formData.get("grupo")), texto(formData.get("variante"))),
   );
 }
 
