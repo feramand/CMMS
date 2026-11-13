@@ -121,6 +121,8 @@ export function solicitudesPendientes(filtro?: SQL) {
     .select({
       id: solicitudesRepuesto.id,
       cantidad: solicitudesRepuesto.cantidad,
+      entregada: solicitudesRepuesto.entregada,
+      scId: solicitudesRepuesto.scId,
       codigo: solicitudesRepuesto.codigoFabricante,
       descripcion: solicitudesRepuesto.descripcion,
       repuestoId: solicitudesRepuesto.repuestoId,

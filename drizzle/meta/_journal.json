@@ -92,6 +92,20 @@
       "when": 1794522979839,
       "tag": "0012_compras",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794532335381,
+      "tag": "0013_compras_ajustes",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794532407621,
+      "tag": "0014_cierre_sc",
+      "breakpoints": true
     }
   ]
 }

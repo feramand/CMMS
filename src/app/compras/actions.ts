@@ -2,12 +2,16 @@
 
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { activos, repuestos, type Moneda } from "@/db/schema";
+import { activos, repuestos, type Moneda, type RolAutorizacion } from "@/db/schema";
+import { documentoDeFormulario, guardarCotizacion } from "@/lib/adjuntos-core";
 import { ejecutar, entero, texto } from "@/lib/accion";
 import { numero } from "@/lib/bodega-core";
 import {
   anularOc,
   autorizarOc,
+  cambiarImputacionOc,
+  cerrarSc,
+  ROLES_AUTORIZACION,
   crearSc,
   emitirOc,
   fijarAutorizador,
@@ -44,7 +48,7 @@ export async function accionCrearSc(f: FormData) {
       const [r] = resto.length ? await db.select({ id: repuestos.id }).from(repuestos).where(eq(repuestos.codigo, codigo.trim().toUpperCase())) : [];
       lineas.push({ repuestoId: r?.id ?? null, descripcion: item, cantidad });
     }
-    const id = await crearSc(db, actor, { lineas, centroCostoId: entero(f.get("centroCostoId")) || null, nota: texto(f.get("nota")) });
+    const id = await crearSc(db, actor, { lineas, centroCostoId: entero(f.get("centroCostoId")) || null, cuentaId: entero(f.get("cuentaId")) || null, nota: texto(f.get("nota")) });
     return `/compras/sc/${id}`;
   });
 }
@@ -63,8 +67,12 @@ export async function accionEmitirOc(f: FormData) {
     for (const [clave, valor] of f.entries()) {
       if (clave.startsWith("p_")) precios[Number(clave.slice(2))] = numOpcional(valor, "Precio");
     }
+    const cotizacion = await documentoDeFormulario(f, "cotizacion");
     const id = await emitirOc(db, actor, {
       scId,
+      cuentaId: entero(f.get("cuentaId")) || null,
+      centroCostoId: entero(f.get("centroCostoId")) || null,
+      ivaExento: f.get("ivaExento") === "on",
       proveedorId: entero(f.get("proveedorId")),
       moneda: texto(f.get("moneda")) as Moneda,
       fechaEntrega: texto(f.get("fechaEntrega")),
@@ -72,6 +80,7 @@ export async function accionEmitirOc(f: FormData) {
       nota: texto(f.get("nota")),
       precios,
     });
+    if (cotizacion) await guardarCotizacion(db, actor, id, cotizacion);
     return `/compras/oc/${id}`;
   });
 }
@@ -145,7 +154,10 @@ export async function accionGuardarCatalogo(f: FormData) {
 
 export async function accionFijarAutorizador(f: FormData) {
   const actor = await exigirSesion();
-  await ejecutar("/compras/contabilidad", () => fijarAutorizador(db, actor, entero(f.get("usuarioId")), f.get("puede") === "si"));
+  await ejecutar("/compras/contabilidad", () => {
+    const cargo = texto(f.get("cargo"));
+    return fijarAutorizador(db, actor, entero(f.get("usuarioId")), cargo in ROLES_AUTORIZACION ? (cargo as RolAutorizacion) : null);
+  });
 }
 
 /** Centro de costo al que se imputa lo que consume una máquina. */
@@ -157,5 +169,29 @@ export async function accionCentroDeMaquina(f: FormData) {
       .update(activos)
       .set({ centroCostoId: entero(f.get("centroCostoId")) || null })
       .where(eq(activos.id, entero(f.get("activoId"))));
+  });
+}
+
+export async function accionCerrarSc(f: FormData) {
+  const actor = await exigirSesion();
+  const id = entero(f.get("id"));
+  await ejecutar(`/compras/sc/${id}`, () => cerrarSc(db, actor, id));
+}
+
+export async function accionImputacionOc(f: FormData) {
+  const actor = await exigirSesion();
+  const id = entero(f.get("id"));
+  await ejecutar(`/compras/oc/${id}`, () =>
+    cambiarImputacionOc(db, actor, id, { cuentaId: entero(f.get("cuentaId")), centroCostoId: entero(f.get("centroCostoId")) }),
+  );
+}
+
+export async function accionAdjuntarCotizacion(f: FormData) {
+  const actor = await exigirSesion();
+  const id = entero(f.get("id"));
+  await ejecutar(`/compras/oc/${id}`, async () => {
+    const doc = await documentoDeFormulario(f, "cotizacion");
+    if (!doc) throw new ErrorDeNegocio("Elige el archivo de la cotización.");
+    await guardarCotizacion(db, actor, id, doc);
   });
 }

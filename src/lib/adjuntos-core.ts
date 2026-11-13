@@ -2,8 +2,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { eq } from "drizzle-orm";
 import type { DB } from "@/db";
-import { adjuntos } from "@/db/schema";
+import { adjuntos, ordenesCompra } from "@/db/schema";
 import type { UsuarioSesion } from "./auth-core";
 import { ErrorDeNegocio } from "./usuarios-core";
 
@@ -12,6 +13,7 @@ export const MAX_BYTES = 10 * 1024 * 1024;
 
 export type Foto = { nombre: string; bytes: Uint8Array };
 export type Destino = { solicitudId: number } | { otId: number } | { repuestoId: number };
+export const MAX_COTIZACIONES = 5;
 
 /** Tipo de imagen según sus primeros bytes; el nombre y el tipo que declara el navegador no son de fiar. */
 export function tipoDeImagen(b: Uint8Array): { tipo: string; extension: string } | null {
@@ -32,7 +34,7 @@ export function carpetaAdjuntos(): string {
 
 /** Ruta en disco de un adjunto; rechaza cualquier nombre que no sea el que genera el sistema. */
 export function rutaAdjunto(archivo: string, carpeta = carpetaAdjuntos()): string {
-  if (!/^[0-9a-f-]{36}\.(jpg|png|webp)$/.test(archivo)) throw new ErrorDeNegocio("Adjunto no válido.");
+  if (!/^[0-9a-f-]{36}\.(jpg|png|webp|pdf)$/.test(archivo)) throw new ErrorDeNegocio("Adjunto no válido.");
   // La carpeta se define en la instalación; no forma parte del código a empaquetar.
   return path.join(/* turbopackIgnore: true */ carpeta, archivo);
 }
@@ -98,4 +100,56 @@ export async function fotosDeFormulario(formData: FormData, campo = "fotos"): Pr
     if (!tipoDeImagen(f.bytes)) throw new ErrorDeNegocio(`"${f.nombre}" no es una foto JPG, PNG o WebP.`);
   }
   return fotos;
+}
+
+/** PDF o imagen, según sus primeros bytes. */
+function tipoDeDocumento(b: Uint8Array): { tipo: string; extension: string } | null {
+  if (b.length >= 5 && [..."%PDF-"].every((c, i) => b[i] === c.charCodeAt(0))) return { tipo: "application/pdf", extension: "pdf" };
+  return tipoDeImagen(b);
+}
+
+/** Cotización del proveedor adjunta a una orden de compra: PDF o foto, hasta 10 MB. La adjunta abastecimiento. */
+export async function guardarCotizacion(
+  db: DB,
+  actor: UsuarioSesion,
+  ocId: number,
+  doc: Foto,
+  carpeta = carpetaAdjuntos(),
+): Promise<void> {
+  if (actor.perfil !== "ABASTECIMIENTO" && actor.perfil !== "ADMINISTRADOR") throw new ErrorDeNegocio("Solo abastecimiento adjunta cotizaciones.");
+  if (doc.bytes.length === 0) return;
+  if (doc.bytes.length > MAX_BYTES) throw new ErrorDeNegocio(`"${doc.nombre}" pesa más de ${MAX_BYTES / 1024 / 1024} MB.`);
+  const tipo = tipoDeDocumento(doc.bytes);
+  if (!tipo) throw new ErrorDeNegocio(`"${doc.nombre}" no es un PDF ni una imagen JPG, PNG o WebP.`);
+  const [oc] = await db.select({ id: ordenesCompra.id }).from(ordenesCompra).where(eq(ordenesCompra.id, ocId));
+  if (!oc) throw new ErrorDeNegocio("La orden de compra no existe.");
+  const previas = await db.select({ id: adjuntos.id }).from(adjuntos).where(eq(adjuntos.ocId, ocId));
+  if (previas.length >= MAX_COTIZACIONES) throw new ErrorDeNegocio(`Una orden admite hasta ${MAX_COTIZACIONES} documentos adjuntos.`);
+  const archivo = `${randomUUID()}.${tipo.extension}`;
+  await mkdir(carpeta, { recursive: true });
+  const ruta = rutaAdjunto(archivo, carpeta);
+  await writeFile(ruta, doc.bytes, { flag: "wx" });
+  try {
+    await db.insert(adjuntos).values({
+      ocId,
+      archivo,
+      tipo: tipo.tipo,
+      bytes: doc.bytes.length,
+      subidoPor: actor.id,
+      nombreOriginal: doc.nombre.replace(/[^\p{L}\p{N} ._-]/gu, "_").slice(0, 120) || null,
+    });
+  } catch (e) {
+    await unlink(ruta).catch(() => undefined);
+    throw e;
+  }
+}
+
+/** Archivo de un formulario como documento; null si el campo viene vacío. */
+export async function documentoDeFormulario(formData: FormData, campo: string): Promise<Foto | null> {
+  const a = formData.get(campo);
+  if (!(a instanceof File) || a.size === 0) return null;
+  if (a.size > MAX_BYTES) throw new ErrorDeNegocio(`"${a.name}" pesa más de ${MAX_BYTES / 1024 / 1024} MB.`);
+  const doc = { nombre: a.name, bytes: new Uint8Array(await a.arrayBuffer()) };
+  if (!tipoDeDocumento(doc.bytes)) throw new ErrorDeNegocio(`"${doc.nombre}" no es un PDF ni una imagen JPG, PNG o WebP.`);
+  return doc;
 }

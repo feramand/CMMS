@@ -32,8 +32,8 @@ export function ChipOc({ estado }: { estado: EstadoOc }) {
 }
 
 const SC = {
-  ENVIADA: ["Por aprobar", "ambar"],
-  APROBADA: ["Aprobada, sin orden de compra", "azul"],
+  ENVIADA: ["Por visar", "ambar"],
+  APROBADA: ["Visada, con líneas por comprar", "azul"],
   CONVERTIDA: ["Con orden de compra", "verde"],
   RECHAZADA: ["Rechazada", "rojo"],
 } as const;

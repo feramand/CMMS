@@ -7,6 +7,7 @@ import { Fotos } from "@/componentes/fotos";
 import { AvisoError, campo, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
 import { adjuntos, solicitudesRepuesto } from "@/db/schema";
+import { folioSc } from "@/lib/compras-core";
 import { listarAlmacenes, listarExistencias, solicitudesPendientes } from "@/lib/consultas-bodega";
 import { exigirPerfil } from "@/lib/dal";
 import { cant } from "@/lib/formato";
@@ -28,7 +29,11 @@ export default async function AtenderSolicitud({ params, searchParams }: Props) 
   ]);
   if (!s) notFound();
   const pedido = catalogo.find((r) => r.id === s.repuestoId);
-  const conStock = pedido ? almacenes.find((a) => (pedido.porAlmacen[a.id]?.cantidad ?? 0) >= s.cantidad) : undefined;
+  const falta = Math.round((s.cantidad - s.entregada) * 100) / 100;
+  const conStock = pedido
+    ? (almacenes.find((a) => (pedido.porAlmacen[a.id]?.cantidad ?? 0) >= falta) ?? almacenes.find((a) => (pedido.porAlmacen[a.id]?.cantidad ?? 0) > 0))
+    : undefined;
+  const hay = pedido && conStock ? (pedido.porAlmacen[conStock.id]?.cantidad ?? 0) : 0;
   const vuelta = usuario.perfil === "BODEGUERO" ? "/inicio" : "/bodega/solicitudes";
   return (
     <>
@@ -53,6 +58,16 @@ export default async function AtenderSolicitud({ params, searchParams }: Props) 
           <span className="text-sm text-slate-600">
             Pidió {s.solicitante} · {fechaHora(s.creadaEn)}
           </span>
+          {s.entregada > 0 && (
+            <span className="font-semibold">
+              Ya entregado: {cant(s.entregada)} · falta {cant(falta)}
+            </span>
+          )}
+          {s.scId && (
+            <Link href={`/compras/sc/${s.scId}`} className="text-marca underline">
+              Lo que falta está pedido en la solicitud de compra {folioSc(s.scId)}
+            </Link>
+          )}
           <Fotos ids={fotos.map((f) => f.id)} titulo="Fotos de referencia" />
         </section>
         {pedido && (
@@ -97,14 +112,25 @@ export default async function AtenderSolicitud({ params, searchParams }: Props) 
           </label>
           <label className="flex flex-col gap-1 text-base font-semibold">
             Cantidad entregada
-            <input name="cantidad" required inputMode="decimal" defaultValue={s.cantidad} className={`${campo} h-14 text-lg`} />
+            <input name="cantidad" inputMode="decimal" defaultValue={pedido ? Math.min(falta, hay) || "" : falta} className={`${campo} h-14 text-lg`} />
           </label>
+          {!s.scId && (
+            <label className="flex items-center gap-3 text-base">
+              <input type="checkbox" name="pedirResto" defaultChecked className="size-6" />
+              Si entrego menos de lo pedido, mandar el resto a solicitud de compra
+            </label>
+          )}
           <p className="text-sm text-slate-600">
             La entrega descuenta existencias{s.folio ? ` y carga el costo a la OT ${s.folio}` : ""}. Se avisa a {s.solicitante}.
           </p>
-          <button type="submit" className="h-16 rounded-xl bg-green-700 text-xl font-bold text-white">
+          <button type="submit" name="decision" value="entregar" className="h-16 rounded-xl bg-green-700 text-xl font-bold text-white">
             Entregar
           </button>
+          {!s.scId && (
+            <button type="submit" name="decision" value="comprar" formNoValidate className="h-14 rounded-xl border-2 border-marca text-lg font-bold text-marca">
+              No hay existencias: mandar todo a solicitud de compra
+            </button>
+          )}
         </form>
         <form action={accionRechazarSolicitud} className={`${tarjeta} flex flex-col gap-3`}>
           <h2 className="text-lg font-bold">Rechazar</h2>

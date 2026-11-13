@@ -30,10 +30,14 @@ export async function listarSc(filtro?: SQL, limite = 200) {
       solicitante: usuarios.nombre,
       centroCostoId: solicitudesCompra.centroCostoId,
       centro: centrosCosto.nombre,
+      cuentaId: solicitudesCompra.cuentaId,
+      cuenta: cuentasContables.nombre,
+      cerradaEn: solicitudesCompra.cerradaEn,
     })
     .from(solicitudesCompra)
     .innerJoin(usuarios, eq(usuarios.id, solicitudesCompra.solicitanteId))
     .leftJoin(centrosCosto, eq(centrosCosto.id, solicitudesCompra.centroCostoId))
+    .leftJoin(cuentasContables, eq(cuentasContables.id, solicitudesCompra.cuentaId))
     .where(filtro)
     .orderBy(desc(solicitudesCompra.id))
     .limit(limite);
@@ -63,11 +67,20 @@ export async function listarOc(filtro?: SQL, limite = 200) {
       proveedorContacto: proveedores.contacto,
       centro: centrosCosto.nombre,
       centroCodigo: centrosCosto.codigo,
+      centroCostoId: ordenesCompra.centroCostoId,
+      cuentaId: ordenesCompra.cuentaId,
+      cuenta: cuentasContables.nombre,
+      cuentaCodigo: cuentasContables.codigo,
+      ivaExento: ordenesCompra.ivaExento,
+      proveedorGiro: proveedores.giro,
+      proveedorEmail: proveedores.email,
+      proveedorTelefono: proveedores.telefono,
     })
     .from(ordenesCompra)
     .innerJoin(proveedores, eq(proveedores.id, ordenesCompra.proveedorId))
     .innerJoin(emisor, eq(emisor.id, ordenesCompra.emitidaPor))
     .leftJoin(centrosCosto, eq(centrosCosto.id, ordenesCompra.centroCostoId))
+    .leftJoin(cuentasContables, eq(cuentasContables.id, ordenesCompra.cuentaId))
     .where(filtro)
     .orderBy(desc(ordenesCompra.id))
     .limit(limite);
@@ -79,6 +92,6 @@ export async function listarOc(filtro?: SQL, limite = 200) {
   ]);
   return ocs.map((o) => {
     const propias = lineas.filter((l) => l.ocId === o.id);
-    return { ...o, lineas: propias, autorizaciones: firmas.filter((f) => f.ocId === o.id), ...totales(propias, o.moneda) };
+    return { ...o, lineas: propias, autorizaciones: firmas.filter((f) => f.ocId === o.id), ...totales(propias, o.moneda, o.ivaExento) };
   });
 }

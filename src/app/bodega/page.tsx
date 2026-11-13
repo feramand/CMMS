@@ -89,6 +89,7 @@ export default async function Existencias({ searchParams }: Props) {
                 <th className="px-3 py-2">Código fabricante</th>
                 <th className="px-3 py-2">Marca</th>
                 <th className="px-3 py-2">Descripción</th>
+                <th className="px-3 py-2">Ubicación</th>
                 {visibles.map((a) => (
                   <th key={a.id} className="px-3 py-2 text-right">
                     {a.nombre}
@@ -119,10 +120,21 @@ export default async function Existencias({ searchParams }: Props) {
                       </span>
                     )}
                   </td>
+                  <td className="px-3 py-2 text-sm">
+                    {visibles.filter((a) => r.porAlmacen[a.id]?.ubicacion).length === 0
+                      ? "—"
+                      : visibles
+                          .filter((a) => r.porAlmacen[a.id]?.ubicacion)
+                          .map((a) => (
+                            <span key={a.id} className="block whitespace-nowrap">
+                              {visibles.length > 1 && <span className="text-slate-500">{a.nombre}: </span>}
+                              {r.porAlmacen[a.id].ubicacion}
+                            </span>
+                          ))}
+                  </td>
                   {visibles.map((a) => (
                     <td key={a.id} className="px-3 py-2 text-right tabular-nums">
                       {cant(r.porAlmacen[a.id]?.cantidad ?? 0)}
-                      {r.porAlmacen[a.id]?.ubicacion && <span className="block text-xs text-slate-500">{r.porAlmacen[a.id].ubicacion}</span>}
                     </td>
                   ))}
                   {!almacenId && (
@@ -137,7 +149,7 @@ export default async function Existencias({ searchParams }: Props) {
               ))}
               {filas.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-6 text-center text-slate-600">
+                  <td colSpan={11} className="px-3 py-6 text-center text-slate-600">
                     {todos.length === 0 && !q ? "El catálogo está vacío. Crea un repuesto o carga la planilla." : "Ningún repuesto coincide con el filtro."}
                   </td>
                 </tr>

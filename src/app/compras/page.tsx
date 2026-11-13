@@ -18,8 +18,8 @@ export default async function Compras() {
   const porRecibir = ocs.filter((o) => o.estado === "AUTORIZADA" || o.estado === "RECIBIDA_PARCIAL").length;
   const porComprar = propuesta.filter((p) => p.sugerida > 0).length;
   const numeros = [
-    ["Solicitudes por aprobar", porAprobar],
-    ["Aprobadas sin orden de compra", sinOc],
+    ["Solicitudes por visar", porAprobar],
+    ["Visadas con líneas por comprar", sinOc],
     ["Órdenes por autorizar", porAutorizar],
     ["Órdenes por recibir", porRecibir],
   ] as const;

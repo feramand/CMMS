@@ -16,9 +16,10 @@ type Props = { searchParams: Promise<{ sat?: string; ot?: string; pauta?: string
 
 export default async function SolicitarRepuesto({ searchParams }: Props) {
   const usuario = await exigirPerfil("TECNICO", "JEFE_PLANIFICADOR", "ADMINISTRADOR");
-  const { sat, ot, pauta: deCiclo, error } = await searchParams;
+  const { ot, pauta: deCiclo, error } = await searchParams;
   const otId = Number(ot) || null;
-  const solicitudId = Number(sat) || null;
+  // Desde una solicitud ya no se piden repuestos: primero se convierte en orden de trabajo.
+  const solicitudId = null as number | null;
   const [orden] = otId ? await listarOts(eq(ordenesTrabajo.id, otId), 1) : [];
   const [solicitud] = !otId && solicitudId ? await listarSolicitudes(eq(solicitudes.id, solicitudId), 1) : [];
   const cicloId = !orden && !solicitud ? Number(deCiclo) || null : null;

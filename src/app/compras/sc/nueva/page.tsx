@@ -4,9 +4,9 @@ import { MenuCompras } from "@/componentes/compras";
 import { Encabezado } from "@/componentes/encabezado";
 import { AvisoError, botonPrimario, campo, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { gestionaCompras, propuestaDeCompra } from "@/lib/compras-core";
+import { propuestaDeCompra, visaCompras } from "@/lib/compras-core";
 import { listarExistencias } from "@/lib/consultas-bodega";
-import { listarCentros } from "@/lib/consultas-compras";
+import { listarCentros, listarCuentas } from "@/lib/consultas-compras";
 import { exigirPerfil } from "@/lib/dal";
 import { cant } from "@/lib/formato";
 import { accionCrearSc } from "../../actions";
@@ -16,7 +16,7 @@ const FILAS = 10;
 export default async function NuevaSc({ searchParams }: { searchParams: Promise<{ error?: string; propuesta?: string }> }) {
   const usuario = await exigirPerfil("ABASTECIMIENTO", "ADMINISTRADOR", "JEFE_PLANIFICADOR", "BODEGUERO");
   const { error, propuesta } = await searchParams;
-  const [catalogo, centros, sugeridas] = await Promise.all([listarExistencias(), listarCentros(), propuesta ? propuestaDeCompra(db) : []]);
+  const [catalogo, centros, cuentas, sugeridas] = await Promise.all([listarExistencias(), listarCentros(), listarCuentas(), propuesta ? propuestaDeCompra(db) : []]);
   const previas = sugeridas.filter((p) => p.sugerida > 0);
   const filas = Array.from({ length: Math.max(FILAS, previas.length + 3) }, (_, i) => previas[i]);
   return (
@@ -61,6 +61,19 @@ export default async function NuevaSc({ searchParams }: { searchParams: Promise<
           </div>
           <SugerenciasRepuestos id="catalogo" repuestos={catalogo} />
           <label className="flex flex-col gap-1 text-sm font-semibold">
+            Cuenta contable (opcional)
+            <select name="cuentaId" defaultValue="" className={campo}>
+              <option value="">—</option>
+              {cuentas
+                .filter((c) => c.activo)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.codigo} · {c.nombre}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm font-semibold">
             Centro de costo (opcional)
             <select name="centroCostoId" defaultValue="" className={campo}>
               <option value="">—</option>
@@ -78,7 +91,7 @@ export default async function NuevaSc({ searchParams }: { searchParams: Promise<
             <input name="nota" className={campo} />
           </label>
           <button type="submit" className={botonPrimario}>
-            {gestionaCompras(usuario) ? "Crear solicitud (queda aprobada)" : "Enviar a abastecimiento"}
+            {visaCompras(usuario) ? "Crear solicitud (queda visada y pasa a abastecimiento)" : "Enviar para visar"}
           </button>
         </form>
       </main>

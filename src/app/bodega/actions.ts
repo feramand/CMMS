@@ -16,6 +16,7 @@ import {
   crearRepuesto,
   entregarSolicitud,
   fijarUbicacion,
+  pedirCompraDeSolicitud,
   importarRepuestos,
   numero,
   rechazarSolicitud,
@@ -143,11 +144,17 @@ export async function accionEntregarSolicitud(f: FormData) {
   const actor = await exigirSesion();
   const id = entero(f.get("id"));
   await ejecutar(`/bodega/solicitud/${id}`, async () => {
-    await entregarSolicitud(db, actor, id, {
-      repuestoId: await repuestoPorCodigo(f.get("repuesto")),
-      almacenId: entero(f.get("almacenId")),
-      cantidad: num(f.get("cantidad")),
-    });
+    if (f.get("decision") === "comprar") {
+      const item = texto(f.get("repuesto")).trim();
+      await pedirCompraDeSolicitud(db, actor, id, item.includes(" — ") ? await repuestoPorCodigo(item) : null);
+    } else {
+      await entregarSolicitud(db, actor, id, {
+        repuestoId: await repuestoPorCodigo(f.get("repuesto")),
+        almacenId: entero(f.get("almacenId")),
+        cantidad: num(f.get("cantidad")),
+        pedirResto: f.get("pedirResto") === "on",
+      });
+    }
     return actor.perfil === "BODEGUERO" ? "/inicio" : "/bodega/solicitudes";
   });
 }

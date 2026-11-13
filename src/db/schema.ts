@@ -27,6 +27,9 @@ export const perfilEnum = pgEnum("perfil", [
   "ABASTECIMIENTO",
 ]);
 
+export const rolAutorizacionEnum = pgEnum("rol_autorizacion", ["JEFE_MANTENIMIENTO", "GERENTE_PRODUCCION", "GERENTE_GENERAL"]);
+export type RolAutorizacion = (typeof rolAutorizacionEnum.enumValues)[number];
+
 export const modalidadEnum = pgEnum("modalidad", ["HORARIO_FIJO", "TURNOS"]);
 
 export const nivelEnum = pgEnum("nivel", ["BASICO", "INTERMEDIO", "AVANZADO"]);
@@ -65,6 +68,8 @@ export const usuarios = pgTable("usuarios", {
   activo: boolean("activo").notNull().default(true),
   // Permiso por persona: autorizar órdenes de compra (jefe de mantenimiento, gerente de producción).
   puedeAutorizarOc: boolean("puede_autorizar_oc").notNull().default(false),
+  // Cargo con el que firma las órdenes de compra. Vacío: el que corresponde a su perfil.
+  cargoOc: rolAutorizacionEnum("cargo_oc"),
   creadoEn: timestamp("creado_en", { withTimezone: true }).notNull().defaultNow(),
   ultimoIngreso: timestamp("ultimo_ingreso", { withTimezone: true }),
 });
@@ -321,6 +326,9 @@ export const solicitudesRepuesto = pgTable("solicitudes_repuesto", {
     .notNull()
     .references(() => usuarios.id),
   cantidad: integer("cantidad").notNull(),
+  // Lo que bodega ya entregó. Si es menos que lo pedido y el resto se mandó a comprar, la solicitud sigue abierta.
+  entregada: numeric("entregada", { precision: 14, scale: 2, mode: "number" }).notNull().default(0),
+  scId: integer("sc_id").references((): AnyPgColumn => solicitudesCompra.id),
   codigoFabricante: text("codigo_fabricante"),
   descripcion: text("descripcion").notNull(),
   // Repuesto del catálogo, si el técnico lo eligió de las sugerencias o el bodeguero lo identificó al entregar.
@@ -363,6 +371,9 @@ export const adjuntos = pgTable("adjuntos", {
   solicitudId: integer("solicitud_id").references(() => solicitudes.id, { onDelete: "cascade" }),
   otId: integer("ot_id").references(() => ordenesTrabajo.id, { onDelete: "cascade" }),
   repuestoId: integer("repuesto_id").references(() => solicitudesRepuesto.id, { onDelete: "cascade" }),
+  // Cotización del proveedor adjunta a una orden de compra (PDF o imagen).
+  ocId: integer("oc_id").references((): AnyPgColumn => ordenesCompra.id, { onDelete: "cascade" }),
+  nombreOriginal: text("nombre_original"),
   // Nombre del archivo en la carpeta de adjuntos (aleatorio; nunca el nombre original).
   archivo: text("archivo").notNull().unique(),
   tipo: text("tipo").notNull(),
@@ -698,12 +709,15 @@ export const solicitudesCompra = pgTable("solicitudes_compra", {
     .notNull()
     .references(() => usuarios.id),
   centroCostoId: integer("centro_costo_id").references(() => centrosCosto.id),
+  cuentaId: integer("cuenta_id").references(() => cuentasContables.id),
   estado: estadoScEnum("estado").notNull().default("ENVIADA"),
   nota: text("nota"),
   motivoRechazo: text("motivo_rechazo"),
   creadaEn: timestamp("creada_en", { withTimezone: true }).notNull().defaultNow(),
   resueltaPor: integer("resuelta_por").references(() => usuarios.id),
   resueltaEn: timestamp("resuelta_en", { withTimezone: true }),
+  // Abastecimiento la cerró con líneas sin comprar.
+  cerradaEn: timestamp("cerrada_en", { withTimezone: true }),
 });
 
 export const lineasSc = pgTable("lineas_sc", {
@@ -741,6 +755,8 @@ export const ordenesCompra = pgTable("ordenes_compra", {
   moneda: monedaEnum("moneda").notNull().default("CLP"),
   estado: estadoOcEnum("estado").notNull().default("EMITIDA"),
   centroCostoId: integer("centro_costo_id").references(() => centrosCosto.id),
+  cuentaId: integer("cuenta_id").references(() => cuentasContables.id),
+  ivaExento: boolean("iva_exento").notNull().default(false),
   fechaEntrega: date("fecha_entrega"),
   condicionPago: text("condicion_pago"),
   nota: text("nota"),
@@ -758,6 +774,8 @@ export const lineasOc = pgTable("lineas_oc", {
   ocId: integer("oc_id")
     .notNull()
     .references(() => ordenesCompra.id, { onDelete: "cascade" }),
+  // Línea de la solicitud de compra que cubre. Una SC puede repartirse en varias OC.
+  lineaScId: integer("linea_sc_id").references(() => lineasSc.id),
   repuestoId: integer("repuesto_id").references(() => repuestos.id),
   descripcion: text("descripcion").notNull(),
   cantidad: cantidad("cantidad").notNull(),
@@ -766,10 +784,9 @@ export const lineasOc = pgTable("lineas_oc", {
   recibida: cantidad("recibida").notNull().default(0),
 });
 
-export const rolAutorizacionEnum = pgEnum("rol_autorizacion", ["JEFE_MANTENIMIENTO", "GERENTE_PRODUCCION"]);
-export type RolAutorizacion = (typeof rolAutorizacionEnum.enumValues)[number];
 
-// Una fila por cada autorización. La OC necesita las dos: jefe de mantenimiento y gerente de producción.
+// Una fila por cada autorización. La OC necesita dos: jefe de mantenimiento y gerente de producción.
+// La del gerente general es opcional.
 export const autorizacionesOc = pgTable(
   "autorizaciones_oc",
   {

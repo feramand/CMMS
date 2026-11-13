@@ -4,7 +4,7 @@ import { Encabezado } from "@/componentes/encabezado";
 import { AvisoError, botonPrimario, botonSecundario, campo, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
 import { activos, usuarios } from "@/db/schema";
-import { gestionaCompras, rolDe, ROLES_AUTORIZACION } from "@/lib/compras-core";
+import { cargosDe, gestionaCompras, rolDe, ROLES_AUTORIZACION } from "@/lib/compras-core";
 import { listarCentros, listarCuentas } from "@/lib/consultas-compras";
 import { exigirPerfil } from "@/lib/dal";
 import { partesEnChile } from "@/lib/tiempo";
@@ -52,7 +52,7 @@ export default async function Contabilidad({ searchParams }: { searchParams: Pro
     listarCentros(),
     db.select({ id: activos.id, nombre: activos.nombre, codigo: activos.codigo, centroCostoId: activos.centroCostoId }).from(activos).orderBy(activos.nombre),
     db
-      .select({ id: usuarios.id, nombre: usuarios.nombre, perfil: usuarios.perfil, puede: usuarios.puedeAutorizarOc })
+      .select({ id: usuarios.id, nombre: usuarios.nombre, perfil: usuarios.perfil, puedeAutorizarOc: usuarios.puedeAutorizarOc, cargoOc: usuarios.cargoOc })
       .from(usuarios)
       .where(and(eq(usuarios.activo, true), inArray(usuarios.perfil, ["JEFE_PLANIFICADOR", "ADMINISTRADOR"])))
       .orderBy(usuarios.nombre),
@@ -86,8 +86,8 @@ export default async function Contabilidad({ searchParams }: { searchParams: Pro
           </form>
         </section>
         <div className="grid items-start gap-4 lg:grid-cols-2">
-          <Catalogo tipo="cuenta" titulo="Cuentas contables" ayuda="Se asignan a cada repuesto en su ficha de bodega." items={cuentas} edita={edita} />
-          <Catalogo tipo="centro" titulo="Centros de costo" ayuda="Se asignan a cada máquina (abajo) y a las solicitudes de compra." items={centros} edita={edita} />
+          <Catalogo tipo="cuenta" titulo="Cuentas contables" ayuda="Se asignan a cada repuesto en su ficha de bodega y a cada orden de compra." items={cuentas} edita={edita} />
+          <Catalogo tipo="centro" titulo="Centros de costo" ayuda="Se asignan a cada máquina (abajo), a las solicitudes de compra y a cada orden de compra." items={centros} edita={edita} />
         </div>
         <section className={`${tarjeta} flex flex-col gap-3`}>
           <h2 className="text-lg font-bold">Centro de costo de cada máquina</h2>
@@ -117,25 +117,33 @@ export default async function Contabilidad({ searchParams }: { searchParams: Pro
         <section className={`${tarjeta} flex flex-col gap-3`}>
           <h2 className="text-lg font-bold">Quiénes autorizan órdenes de compra</h2>
           <p className="text-sm text-slate-600">
-            Cada orden necesita dos autorizaciones: una de un jefe (como jefe de mantenimiento) y una de un administrador (como
-            gerente de producción). El permiso es por persona y lo define el administrador.
+            Cada orden necesita dos firmas: jefe de mantenimiento y gerente de producción. La del gerente general es opcional.
+            El cargo con el que firma cada persona lo define el administrador.
           </p>
-          {candidatos.map((c) => (
-            <form key={c.id} action={accionFijarAutorizador} className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-2">
-              <input type="hidden" name="usuarioId" value={c.id} />
-              <span>
-                <b>{c.nombre}</b> · autorizaría como {ROLES_AUTORIZACION[rolDe(c.perfil)!].toLowerCase()}
-              </span>
-              <span className="flex items-center gap-3">
-                <b className={c.puede ? "text-green-700" : "text-slate-500"}>{c.puede ? "Autoriza" : "No autoriza"}</b>
-                {usuario.perfil === "ADMINISTRADOR" && (
-                  <button name="puede" value={c.puede ? "no" : "si"} className="h-10 rounded-lg border border-marca px-3 font-semibold text-marca">
-                    {c.puede ? "Quitar permiso" : "Dar permiso"}
-                  </button>
+          {candidatos.map((c) => {
+            const cargo = rolDe(c);
+            return (
+              <form key={c.id} action={accionFijarAutorizador} className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-2">
+                <input type="hidden" name="usuarioId" value={c.id} />
+                <b>{c.nombre}</b>
+                {usuario.perfil === "ADMINISTRADOR" ? (
+                  <span className="flex items-center gap-2">
+                    <select name="cargo" defaultValue={cargo ?? ""} aria-label={`Cargo de ${c.nombre}`} className={campo}>
+                      <option value="">No autoriza</option>
+                      {cargosDe(c.perfil).map((r) => (
+                        <option key={r} value={r}>
+                          {ROLES_AUTORIZACION[r]}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="h-12 rounded-lg border border-marca px-3 font-semibold text-marca">Guardar</button>
+                  </span>
+                ) : (
+                  <b className={cargo ? "text-green-700" : "text-slate-500"}>{cargo ? ROLES_AUTORIZACION[cargo] : "No autoriza"}</b>
                 )}
-              </span>
-            </form>
-          ))}
+              </form>
+            );
+          })}
         </section>
       </main>
     </>

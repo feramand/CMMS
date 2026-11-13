@@ -14,7 +14,10 @@ import {
   crearSc,
   emitirOc,
   fijarAutorizador,
+  cambiarImputacionOc,
+  cerrarSc,
   guardarCentro,
+  guardarCuenta,
   guardarProveedor,
   propuestaDeCompra,
   rechazarOc,
@@ -42,7 +45,8 @@ describe.skipIf(!url)("compras (integración)", () => {
   let pool: Pool;
   let db: DB;
   let bodeguero: UsuarioSesion, jefe: UsuarioSesion, planificador: UsuarioSesion, gerente: UsuarioSesion, compras: UsuarioSesion, tecnico: UsuarioSesion;
-  let central: number, proveedor: number, rod: number;
+  let central: number, proveedor: number, rod: number, cuenta: number, centro: number;
+  const imp = () => ({ cuentaId: cuenta, centroCostoId: centro });
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: url });
@@ -71,6 +75,10 @@ describe.skipIf(!url)("compras (integración)", () => {
     [bodeguero, jefe, planificador, gerente, compras, tecnico] = [s(0), s(1), s(2), s(3), s(4), s(5)];
     central = (await db.select().from(schema.almacenes)).find((a) => a.nombre === "Bodega central")!.id;
     proveedor = await guardarProveedor(db, compras, { nombre: "Rodamientos del Sur", rut: "76.123.456-0", condicionPago: "30 días" });
+    await guardarCuenta(db, compras, { codigo: "5-1-02", nombre: "Repuestos" });
+    await guardarCentro(db, compras, { codigo: "CC-210", nombre: "Prensas" });
+    cuenta = (await db.select().from(schema.cuentasContables))[0].id;
+    centro = (await db.select().from(schema.centrosCosto))[0].id;
     rod = await crearRepuesto(db, bodeguero, { codigo: "ROD-6204", descripcion: "Rodamiento 6204", stockMinimo: 4, stockMaximo: 12 });
   });
 
@@ -82,9 +90,9 @@ describe.skipIf(!url)("compras (integración)", () => {
   /** SC del bodeguero aprobada, con una OC emitida por 10 rodamientos al precio dado. */
   async function ocEmitida(precio = 1300, moneda: schema.Moneda = "CLP") {
     const sc = await crearSc(db, bodeguero, { lineas: [{ repuestoId: rod, cantidad: 10 }, { descripcion: "Flete", cantidad: 1 }] });
-    await resolverSc(db, compras, sc, true);
+    await resolverSc(db, planificador, sc, true);
     const [l1, l2] = await lineasDeSc(sc);
-    return emitirOc(db, compras, { scId: sc, proveedorId: proveedor, moneda, precios: { [l1.id]: precio, [l2.id]: 50 } });
+    return emitirOc(db, compras, { ...imp(), scId: sc, proveedorId: proveedor, moneda, precios: { [l1.id]: precio, [l2.id]: 50 } });
   }
 
   it("proveedor: RUT válido y único", async () => {
@@ -94,38 +102,56 @@ describe.skipIf(!url)("compras (integración)", () => {
     expect((await db.select().from(schema.proveedores))[0]).toMatchObject({ rut: "76123456-0", nombre: "Rodamientos del Sur" });
   });
 
-  it("SC: la crean bodega y jefatura, no el técnico; abastecimiento la aprueba o rechaza con motivo", async () => {
+  it("SC: la crean bodega, abastecimiento y jefatura, no el técnico; la visa el planificador o el jefe", async () => {
     await expect(crearSc(db, tecnico, { lineas: [{ repuestoId: rod, cantidad: 1 }] })).rejects.toThrow("no puede crear");
     await expect(crearSc(db, bodeguero, { lineas: [] })).rejects.toThrow("al menos una línea");
     await expect(crearSc(db, bodeguero, { lineas: [{ descripcion: " ", cantidad: 1 }] })).rejects.toThrow("falta la descripción");
     const sc = await crearSc(db, bodeguero, { lineas: [{ repuestoId: rod, cantidad: 8 }, { descripcion: "Servicio de rectificado", cantidad: 1 }] });
     expect((await lineasDeSc(sc)).map((l) => l.descripcion)).toEqual(["ROD-6204 · Rodamiento 6204", "Servicio de rectificado"]);
-    expect(await avisos(compras.id)).toEqual(["Nueva solicitud de compra SC-00001 de Bodeguero"]);
-    await expect(resolverSc(db, jefe, sc, true)).rejects.toThrow("Solo abastecimiento");
-    await expect(resolverSc(db, compras, sc, false, "")).rejects.toThrow("motivo");
-    await resolverSc(db, compras, sc, false, "Hay stock en pañol");
+    expect(await avisos(planificador.id)).toEqual(["Solicitud de compra SC-00001 de Bodeguero por visar"]);
+    expect(await avisos(compras.id)).toEqual([]);
+    await expect(resolverSc(db, compras, sc, true)).rejects.toThrow("las visa el planificador o el jefe");
+    await expect(resolverSc(db, bodeguero, sc, true)).rejects.toThrow("las visa el planificador o el jefe");
+    await expect(resolverSc(db, planificador, sc, false, "")).rejects.toThrow("motivo");
+    await resolverSc(db, planificador, sc, false, "Hay stock en pañol");
     expect(await avisos(bodeguero.id)).toEqual(["Solicitud de compra SC-00001 rechazada: Hay stock en pañol"]);
-    await expect(resolverSc(db, compras, sc, true)).rejects.toThrow("ya fue resuelta");
-    // La que crea abastecimiento nace aprobada.
-    const propia = await crearSc(db, compras, { lineas: [{ repuestoId: rod, cantidad: 2 }] });
-    expect((await db.select().from(schema.solicitudesCompra).where(eq(schema.solicitudesCompra.id, propia)))[0].estado).toBe("APROBADA");
+    await expect(resolverSc(db, planificador, sc, true)).rejects.toThrow("ya fue resuelta");
+    // La de abastecimiento también necesita el visto bueno; al visarla se libera y se avisa a abastecimiento.
+    const estado = async (id: number) => (await db.select().from(schema.solicitudesCompra).where(eq(schema.solicitudesCompra.id, id)))[0].estado;
+    const propia = await crearSc(db, compras, { lineas: [{ repuestoId: rod, cantidad: 2 }], cuentaId: cuenta, centroCostoId: centro });
+    expect(await estado(propia)).toBe("ENVIADA");
+    await resolverSc(db, jefe, propia, true);
+    expect(await estado(propia)).toBe("APROBADA");
+    expect(await avisos(compras.id)).toEqual(["Solicitud de compra SC-00002 visada", "Solicitud de compra SC-00002 visada: lista para cotizar"]);
+    // La que crea el planificador o el jefe nace visada.
+    expect(await estado(await crearSc(db, planificador, { lineas: [{ repuestoId: rod, cantidad: 1 }] }))).toBe("APROBADA");
   });
 
-  it("OC: solo desde una SC aprobada; las líneas sin precio no se compran", async () => {
+  it("OC: solo desde una SC visada; exige cuenta contable y centro de costo", async () => {
     const sc = await crearSc(db, bodeguero, { lineas: [{ repuestoId: rod, cantidad: 10 }, { descripcion: "Flete", cantidad: 1 }] });
     const [l1] = await lineasDeSc(sc);
-    await expect(emitirOc(db, compras, { scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l1.id]: 1300 } })).rejects.toThrow("solicitud aprobada");
-    await resolverSc(db, compras, sc, true);
-    await expect(emitirOc(db, compras, { scId: sc, proveedorId: proveedor, moneda: "CLP", precios: {} })).rejects.toThrow("al menos una línea");
-    await expect(emitirOc(db, bodeguero, { scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l1.id]: 1300 } })).rejects.toThrow("Solo abastecimiento");
-    const id = await emitirOc(db, compras, { scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l1.id]: 1300 } });
-    expect(await oc(id)).toMatchObject({ estado: "EMITIDA", condicionPago: "30 días", codigoVerificacion: null });
+    await expect(emitirOc(db, compras, { ...imp(), scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l1.id]: 1300 } })).rejects.toThrow("solicitud visada");
+    await resolverSc(db, planificador, sc, true);
+    await expect(emitirOc(db, compras, { ...imp(), scId: sc, proveedorId: proveedor, moneda: "CLP", precios: {} })).rejects.toThrow("al menos una línea");
+    await expect(emitirOc(db, bodeguero, { ...imp(), scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l1.id]: 1300 } })).rejects.toThrow("Solo abastecimiento");
+    await expect(emitirOc(db, compras, { scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l1.id]: 1300 } })).rejects.toThrow("necesita una cuenta contable");
+    await expect(emitirOc(db, compras, { cuentaId: cuenta, scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l1.id]: 1300 } })).rejects.toThrow("necesita un centro de costo");
+    const id = await emitirOc(db, compras, { ...imp(), scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l1.id]: 1300 } });
+    expect(await oc(id)).toMatchObject({ estado: "EMITIDA", condicionPago: "30 días", codigoVerificacion: null, cuentaId: cuenta, centroCostoId: centro, ivaExento: false });
     expect(await db.select().from(schema.lineasOc)).toHaveLength(1);
-    expect((await db.select().from(schema.solicitudesCompra))[0].estado).toBe("CONVERTIDA");
+    // Queda una línea sin orden: la solicitud sigue visada, con líneas por comprar.
+    expect((await db.select().from(schema.solicitudesCompra))[0].estado).toBe("APROBADA");
+    // La imputación se puede corregir en la OC mientras no se reciba.
+    await guardarCentro(db, compras, { codigo: "CC-300", nombre: "Terminación" });
+    const otro = (await db.select().from(schema.centrosCosto)).find((c) => c.codigo === "CC-300")!.id;
+    await expect(cambiarImputacionOc(db, bodeguero, id, { cuentaId: cuenta, centroCostoId: otro })).rejects.toThrow("Solo abastecimiento");
+    await cambiarImputacionOc(db, compras, id, { cuentaId: cuenta, centroCostoId: otro });
+    expect((await oc(id)).centroCostoId).toBe(otro);
     // Se avisa a quienes autorizan: jefe y gerente, no al planificador.
-    expect(await avisos(jefe.id)).toEqual(["Orden de compra OC-00001 por autorizar: Rodamientos del Sur"]);
-    expect(await avisos(gerente.id)).toHaveLength(1);
-    expect(await avisos(planificador.id)).toEqual([]);
+    const porAutorizar = "Orden de compra OC-00001 por autorizar: Rodamientos del Sur";
+    expect(await avisos(jefe.id)).toContain(porAutorizar);
+    expect(await avisos(gerente.id)).toEqual([porAutorizar]);
+    expect(await avisos(planificador.id)).not.toContain(porAutorizar);
   });
 
   it("autorización: hacen falta las dos, jefe de mantenimiento y gerente de producción", async () => {
@@ -148,10 +174,78 @@ describe.skipIf(!url)("compras (integración)", () => {
     await expect(autorizarOc(db, gerente, id)).rejects.toThrow("ya no está pendiente");
   });
 
+  it("una SC se reparte en varias OC; la cuenta y el centro vienen de la SC si la OC no los cambia", async () => {
+    const [otroProv] = await db.insert(schema.proveedores).values({ nombre: "Transportes Norte" }).returning();
+    const sc = await crearSc(db, planificador, {
+      lineas: [{ repuestoId: rod, cantidad: 10 }, { descripcion: "Flete", cantidad: 1 }, { descripcion: "Embalaje", cantidad: 2 }],
+      cuentaId: cuenta,
+      centroCostoId: centro,
+    });
+    const estadoSc = async () => (await db.select().from(schema.solicitudesCompra))[0].estado;
+    const [l1, l2, l3] = await lineasDeSc(sc);
+    const a = await emitirOc(db, compras, { scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l1.id]: 1300 } });
+    expect(await oc(a)).toMatchObject({ cuentaId: cuenta, centroCostoId: centro, scId: sc });
+    expect(await estadoSc()).toBe("APROBADA");
+    await expect(emitirOc(db, compras, { scId: sc, proveedorId: otroProv.id, moneda: "CLP", precios: { [l1.id]: 1200 } })).rejects.toThrow("ya está en la orden de compra OC-00001");
+    const b = await emitirOc(db, compras, { scId: sc, proveedorId: otroProv.id, moneda: "CLP", precios: { [l2.id]: 50000, [l3.id]: 900 } });
+    expect((await oc(b)).scId).toBe(sc);
+    expect(await estadoSc()).toBe("CONVERTIDA");
+    await expect(emitirOc(db, compras, { scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l2.id]: 1 } })).rejects.toThrow("solicitud visada");
+    // Si se anula o se rechaza una OC, sus líneas vuelven a quedar pendientes en la SC.
+    await anularOc(db, compras, b, "Cotización vencida");
+    expect(await estadoSc()).toBe("APROBADA");
+    const c = await emitirOc(db, compras, { scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l2.id]: 45000 } });
+    expect((await db.select().from(schema.lineasOc).where(eq(schema.lineasOc.ocId, c)))[0].lineaScId).toBe(l2.id);
+    expect(await estadoSc()).toBe("APROBADA");
+    // Abastecimiento cierra la solicitud: el embalaje ya no se compra y deja de contar como "en camino".
+    await expect(cerrarSc(db, bodeguero, sc)).rejects.toThrow("Solo abastecimiento");
+    await cerrarSc(db, compras, sc);
+    expect(await estadoSc()).toBe("CONVERTIDA");
+    await rechazarOc(db, jefe, c, "Muy caro");
+    expect(await estadoSc()).toBe("CONVERTIDA");
+  });
+
+  it("IVA exento: con la marca, el IVA es 0 y el total es el neto", async () => {
+    expect(totales([{ cantidad: 10, precioUnitario: 1300 }], "CLP", true)).toEqual({ neto: 13000, iva: 0, total: 13000 });
+    expect(totales([{ cantidad: 10, precioUnitario: 1300 }], "CLP")).toEqual({ neto: 13000, iva: 2470, total: 15470 });
+    const sc = await crearSc(db, jefe, { lineas: [{ repuestoId: rod, cantidad: 10 }] });
+    const [l1] = await lineasDeSc(sc);
+    const id = await emitirOc(db, compras, { ...imp(), scId: sc, proveedorId: proveedor, moneda: "CLP", ivaExento: true, precios: { [l1.id]: 1300 } });
+    expect((await oc(id)).ivaExento).toBe(true);
+  });
+
+  it("gerente general: su firma es opcional, no reemplaza a las obligatorias y puede darla después", async () => {
+    const [u] = await db.insert(schema.usuarios).values({ nombre: "Gerente General", perfil: "ADMINISTRADOR", identificador: "10000000-8", claveHash: "x" }).returning();
+    const general: UsuarioSesion = { id: u.id, nombre: u.nombre, perfil: u.perfil };
+    await expect(autorizarOc(db, general, await ocEmitida())).rejects.toThrow("No tienes permiso");
+    await expect(fijarAutorizador(db, gerente, jefe.id, "GERENTE_GENERAL")).rejects.toThrow("no puede firmar como gerente general");
+    await fijarAutorizador(db, gerente, general.id, "GERENTE_GENERAL");
+    const id = await ocEmitida();
+    // General + jefe no bastan: falta el gerente de producción.
+    expect(await autorizarOc(db, general, id)).toEqual({ completa: false });
+    expect(await autorizarOc(db, jefe, id)).toEqual({ completa: false });
+    expect((await oc(id)).estado).toBe("EMITIDA");
+    expect(await autorizarOc(db, gerente, id)).toEqual({ completa: true });
+    expect((await oc(id)).estado).toBe("AUTORIZADA");
+    // En otra orden, ya autorizada por los dos obligatorios, el general firma después sin cambiar el estado ni el código.
+    const otra = await ocEmitida();
+    await autorizarOc(db, jefe, otra);
+    await autorizarOc(db, gerente, otra);
+    const codigo = (await oc(otra)).codigoVerificacion;
+    expect(await autorizarOc(db, general, otra)).toEqual({ completa: false });
+    expect(await oc(otra)).toMatchObject({ estado: "AUTORIZADA", codigoVerificacion: codigo });
+    await expect(autorizarOc(db, general, otra)).rejects.toThrow("Ya está la autorización de gerente general");
+    expect((await db.select().from(schema.autorizacionesOc).where(eq(schema.autorizacionesOc.ocId, otra))).map((a) => a.rol).sort()).toEqual([
+      "GERENTE_GENERAL",
+      "GERENTE_PRODUCCION",
+      "JEFE_MANTENIMIENTO",
+    ]);
+  });
+
   it("el permiso de autorizar es personal y lo define el administrador", async () => {
-    await expect(fijarAutorizador(db, jefe, planificador.id, true)).rejects.toThrow("Solo el administrador");
-    await expect(fijarAutorizador(db, gerente, compras.id, true)).rejects.toThrow("Solo un jefe o un administrador");
-    await fijarAutorizador(db, gerente, jefe.id, false);
+    await expect(fijarAutorizador(db, jefe, planificador.id, "JEFE_MANTENIMIENTO")).rejects.toThrow("Solo el administrador");
+    await expect(fijarAutorizador(db, gerente, compras.id, "JEFE_MANTENIMIENTO")).rejects.toThrow("Solo un jefe o un administrador");
+    await fijarAutorizador(db, gerente, jefe.id, null);
     const id = await ocEmitida();
     await expect(autorizarOc(db, jefe, id)).rejects.toThrow("No tienes permiso");
   });
@@ -211,9 +305,9 @@ describe.skipIf(!url)("compras (integración)", () => {
     expect((await propuestaDeCompra(db)).map((p) => [p.codigo, p.total, p.enCamino, p.sugerida])).toEqual([["ROD-6204", 2, 0, 10]]);
     const sc = await crearSc(db, bodeguero, { lineas: [{ repuestoId: rod, cantidad: 6 }] });
     expect((await propuestaDeCompra(db))[0]).toMatchObject({ enCamino: 6, sugerida: 4 });
-    await resolverSc(db, compras, sc, true);
+    await resolverSc(db, planificador, sc, true);
     const [l] = await lineasDeSc(sc);
-    await emitirOc(db, compras, { scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l.id]: 1000 } });
+    await emitirOc(db, compras, { ...imp(), scId: sc, proveedorId: proveedor, moneda: "CLP", precios: { [l.id]: 1000 } });
     expect((await propuestaDeCompra(db))[0]).toMatchObject({ enCamino: 6, sugerida: 4 }); // ahora en la OC, no dos veces
   });
 

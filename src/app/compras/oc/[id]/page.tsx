@@ -5,15 +5,15 @@ import { ChipOc, MenuCompras } from "@/componentes/compras";
 import { Encabezado } from "@/componentes/encabezado";
 import { AvisoError, botonPrimario, botonSecundario, campo, Dato, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { almacenes, lineasRecepcion, ordenesCompra, recepciones, usuarios } from "@/db/schema";
+import { adjuntos, almacenes, lineasRecepcion, ordenesCompra, recepciones, usuarios } from "@/db/schema";
 import { operaBodega } from "@/lib/bodega-core";
-import { folioOc, folioSc, gestionaCompras, rolDe, ROLES_AUTORIZACION } from "@/lib/compras-core";
+import { folioOc, folioSc, gestionaCompras, rolDe, ROLES_AUTORIZACION, ROLES_OBLIGATORIOS } from "@/lib/compras-core";
 import { listarAlmacenes } from "@/lib/consultas-bodega";
-import { listarOc } from "@/lib/consultas-compras";
+import { listarCentros, listarCuentas, listarOc } from "@/lib/consultas-compras";
 import { exigirPerfil } from "@/lib/dal";
 import { cant, monto, pesos } from "@/lib/formato";
 import { fechaHora } from "@/lib/tiempo";
-import { accionAnularOc, accionAutorizarOc, accionRecibirOc } from "../../actions";
+import { accionAdjuntarCotizacion, accionAnularOc, accionAutorizarOc, accionImputacionOc, accionRecibirOc } from "../../actions";
 
 type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; aviso?: string }> };
 
@@ -22,10 +22,13 @@ export default async function Oc({ params, searchParams }: Props) {
   const id = Number((await params).id);
   if (!Number.isInteger(id)) notFound();
   const { error, aviso } = await searchParams;
-  const [[oc], [yo], listaAlmacenes, recs] = await Promise.all([
+  const [[oc], [yo], listaAlmacenes, cuentas, centros, cotizaciones, recs] = await Promise.all([
     listarOc(eq(ordenesCompra.id, id), 1),
-    db.select({ puede: usuarios.puedeAutorizarOc }).from(usuarios).where(eq(usuarios.id, usuario.id)),
+    db.select({ perfil: usuarios.perfil, puedeAutorizarOc: usuarios.puedeAutorizarOc, cargoOc: usuarios.cargoOc }).from(usuarios).where(eq(usuarios.id, usuario.id)),
     listarAlmacenes(),
+    listarCuentas(),
+    listarCentros(),
+    db.select({ id: adjuntos.id, nombre: adjuntos.nombreOriginal, tipo: adjuntos.tipo }).from(adjuntos).where(eq(adjuntos.ocId, id)).orderBy(asc(adjuntos.id)),
     db
       .select({ id: recepciones.id, fecha: recepciones.fecha, documento: recepciones.documento, tipoCambio: recepciones.tipoCambio, almacen: almacenes.nombre, quien: usuarios.nombre })
       .from(recepciones)
@@ -36,8 +39,14 @@ export default async function Oc({ params, searchParams }: Props) {
   ]);
   if (!oc) notFound();
   const detalle = recs.length ? await db.select().from(lineasRecepcion).where(inArray(lineasRecepcion.recepcionId, recs.map((r) => r.id))).orderBy(asc(lineasRecepcion.id)) : [];
-  const miRol = yo?.puede ? rolDe(usuario.perfil) : null;
-  const yaFirme = miRol ? oc.autorizaciones.some((a) => a.rol === miRol) : false;
+  const miRol = yo ? rolDe(yo) : null;
+  const yaFirme = oc.autorizaciones.some((a) => a.rol === miRol || a.usuarioId === usuario.id);
+  const vigente = oc.estado !== "RECHAZADA" && oc.estado !== "ANULADA";
+  const obligatorias = oc.autorizaciones.filter((a) => ROLES_OBLIGATORIOS.includes(a.rol)).length;
+  // El gerente general puede firmar aunque la orden ya esté autorizada; los otros dos, solo mientras está emitida.
+  const puedeFirmar = Boolean(miRol) && !yaFirme && (oc.estado === "EMITIDA" || (miRol === "GERENTE_GENERAL" && vigente));
+  const gestiona = gestionaCompras(usuario);
+  const editable = gestiona && (oc.estado === "EMITIDA" || oc.estado === "AUTORIZADA");
   const recibible = oc.estado === "AUTORIZADA" || oc.estado === "RECIBIDA_PARCIAL";
   const m = (n: number, dec = 2) => monto(n, oc.moneda, dec);
   return (
@@ -69,7 +78,8 @@ export default async function Oc({ params, searchParams }: Props) {
             </Dato>
             <Dato etiqueta="Entrega comprometida">{oc.fechaEntrega ? oc.fechaEntrega.split("-").reverse().join("-") : "—"}</Dato>
             <Dato etiqueta="Condición de pago">{oc.condicionPago ?? "—"}</Dato>
-            <Dato etiqueta="Centro de costo">{oc.centro ?? "—"}</Dato>
+            <Dato etiqueta="Cuenta contable">{oc.cuenta ? `${oc.cuentaCodigo} · ${oc.cuenta}` : "—"}</Dato>
+            <Dato etiqueta="Centro de costo">{oc.centro ? `${oc.centroCodigo} · ${oc.centro}` : "—"}</Dato>
             <Dato etiqueta="Solicitud de origen">
               <Link href={`/compras/sc/${oc.scId}`} className="text-marca underline">
                 {folioSc(oc.scId)}
@@ -110,7 +120,7 @@ export default async function Oc({ params, searchParams }: Props) {
                 </tr>
                 <tr>
                   <td colSpan={4} className="py-1">
-                    IVA 19 %
+                    {oc.ivaExento ? "IVA (exenta)" : "IVA 19 %"}
                   </td>
                   <td className="py-1 tabular-nums">{m(oc.iva)}</td>
                 </tr>
@@ -123,23 +133,84 @@ export default async function Oc({ params, searchParams }: Props) {
               </tfoot>
             </table>
           </div>
+          {editable && (
+            <details>
+              <summary className="cursor-pointer font-semibold text-marca">Cambiar cuenta contable o centro de costo</summary>
+              <form action={accionImputacionOc} className="mt-3 grid items-end gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                <input type="hidden" name="id" value={oc.id} />
+                <label className="flex flex-col gap-1 text-sm font-semibold">
+                  Cuenta contable
+                  <select name="cuentaId" required defaultValue={oc.cuentaId ?? ""} className={campo}>
+                    <option value="" disabled>
+                      Elegir…
+                    </option>
+                    {cuentas
+                      .filter((c) => c.activo || c.id === oc.cuentaId)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.codigo} · {c.nombre}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-sm font-semibold">
+                  Centro de costo
+                  <select name="centroCostoId" required defaultValue={oc.centroCostoId ?? ""} className={campo}>
+                    <option value="" disabled>
+                      Elegir…
+                    </option>
+                    {centros
+                      .filter((c) => c.activo || c.id === oc.centroCostoId)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.codigo} · {c.nombre}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <button className={botonSecundario}>Guardar</button>
+              </form>
+            </details>
+          )}
+        </section>
+
+        <section className={`${tarjeta} flex flex-col gap-2`}>
+          <h2 className="text-lg font-bold">Cotización del proveedor</h2>
+          {cotizaciones.length === 0 && <p className="text-slate-600">Sin cotización adjunta.</p>}
+          {cotizaciones.map((c, i) => (
+            <a key={c.id} href={`/adjuntos/${c.id}`} target="_blank" rel="noreferrer" className="text-marca underline">
+              {c.nombre ?? `Documento ${i + 1}`} ({c.tipo === "application/pdf" ? "PDF" : "imagen"})
+            </a>
+          ))}
+          {gestiona && vigente && (
+            <form action={accionAdjuntarCotizacion} className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3">
+              <input type="hidden" name="id" value={oc.id} />
+              <input type="file" name="cotizacion" required aria-label="Archivo de la cotización" accept="application/pdf,image/jpeg,image/png,image/webp" className="text-base" />
+              <button className={botonSecundario}>Adjuntar</button>
+            </form>
+          )}
         </section>
 
         <section className={`${tarjeta} flex flex-col gap-3`}>
-          <h2 className="text-lg font-bold">Autorizaciones · {oc.autorizaciones.length} de 2</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <h2 className="text-lg font-bold">Autorizaciones · {obligatorias} de 2 obligatorias</h2>
+          <div className="grid gap-3 sm:grid-cols-3">
             {(Object.keys(ROLES_AUTORIZACION) as (keyof typeof ROLES_AUTORIZACION)[]).map((rol) => {
               const a = oc.autorizaciones.find((x) => x.rol === rol);
               return (
                 <div key={rol} className={`rounded-lg border p-3 ${a ? "border-green-300 bg-green-50" : "border-slate-300"}`}>
-                  <p className="text-sm text-slate-600">{ROLES_AUTORIZACION[rol]}</p>
-                  <p className="font-semibold">{a ? `${a.nombre} · ${fechaHora(a.fecha)}` : "Pendiente"}</p>
+                  <p className="text-sm text-slate-600">
+                    {ROLES_AUTORIZACION[rol]}
+                    {ROLES_OBLIGATORIOS.includes(rol) ? "" : " (opcional)"}
+                  </p>
+                  <p className="font-semibold">
+                    {a ? `${a.nombre} · ${fechaHora(a.fecha)}` : ROLES_OBLIGATORIOS.includes(rol) ? "Pendiente" : "Sin firma digital"}
+                  </p>
                 </div>
               );
             })}
           </div>
           {oc.codigoVerificacion && <p className="text-sm text-slate-700">Código de verificación: <b className="tracking-wider">{oc.codigoVerificacion}</b></p>}
-          {oc.estado === "EMITIDA" && miRol && !yaFirme && (
+          {puedeFirmar && miRol && (
             <form action={accionAutorizarOc} className="flex flex-col gap-3 border-t border-slate-200 pt-3">
               <input type="hidden" name="id" value={oc.id} />
               <p>
@@ -153,14 +224,16 @@ export default async function Oc({ params, searchParams }: Props) {
                 <button name="decision" value="autorizar" className="h-12 rounded-lg bg-green-700 font-semibold text-white">
                   Autorizar
                 </button>
-                <button name="decision" value="rechazar" className="h-12 rounded-lg border-2 border-red-700 font-semibold text-red-700">
-                  Rechazar
-                </button>
+                {oc.estado === "EMITIDA" && (
+                  <button name="decision" value="rechazar" className="h-12 rounded-lg border-2 border-red-700 font-semibold text-red-700">
+                    Rechazar
+                  </button>
+                )}
               </div>
             </form>
           )}
-          {oc.estado === "EMITIDA" && yaFirme && <p className="text-slate-700">Ya autorizaste esta orden. Falta la otra autorización.</p>}
-          {oc.estado === "EMITIDA" && !miRol && <p className="text-slate-700">Sin las dos autorizaciones, la orden no admite recepciones y solo se imprime como borrador.</p>}
+          {oc.estado === "EMITIDA" && yaFirme && <p className="text-slate-700">Ya autorizaste esta orden.</p>}
+          {oc.estado === "EMITIDA" && !miRol && <p className="text-slate-700">Sin las dos autorizaciones obligatorias, la orden no admite recepciones y solo se imprime como borrador.</p>}
         </section>
 
         {recibible && operaBodega(usuario) && (
@@ -237,7 +310,7 @@ export default async function Oc({ params, searchParams }: Props) {
           </section>
         )}
 
-        {gestionaCompras(usuario) && (oc.estado === "EMITIDA" || oc.estado === "AUTORIZADA") && (
+        {editable && (
           <details className={tarjeta}>
             <summary className="cursor-pointer font-bold text-red-700">Anular esta orden de compra</summary>
             <form action={accionAnularOc} className="mt-3 flex flex-col gap-3">

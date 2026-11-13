@@ -15,6 +15,7 @@ import {
   crearRepuesto,
   entregarSolicitud,
   importarRepuestos,
+  pedirCompraDeSolicitud,
   numero,
   precioMedio,
   rechazarSolicitud,
@@ -66,7 +67,7 @@ describe.skipIf(!url)("bodega (integración)", () => {
   });
   beforeEach(async () => {
     await db.execute(
-      sql`TRUNCATE lineas_toma, tomas_inventario, movimientos, existencias, repuestos_activo, solicitudes_repuesto, repuestos, notificaciones, ordenes_trabajo, folios_ot, solicitudes, sectores, activos, bitacora, fichas_tecnico, usuarios, especialidades, plantas RESTART IDENTITY CASCADE`,
+      sql`TRUNCATE lineas_sc, solicitudes_compra, lineas_toma, tomas_inventario, movimientos, existencias, repuestos_activo, solicitudes_repuesto, repuestos, notificaciones, ordenes_trabajo, folios_ot, solicitudes, sectores, activos, bitacora, fichas_tecnico, usuarios, especialidades, plantas RESTART IDENTITY CASCADE`,
     );
     const planta = (await db.insert(schema.plantas).values({ nombre: "Planta 1" }).returning())[0].id;
     const u = await db
@@ -175,6 +176,38 @@ describe.skipIf(!url)("bodega (integración)", () => {
     const otra = await solicitarRepuesto(db, tecnico, { otId: ot, cantidad: 1, descripcion: "Correa" });
     await rechazarSolicitud(db, bodeguero, otra, "No es de stock");
     expect(await avisos(tecnico.id)).toContain("Repuesto rechazado: Correa (No es de stock)");
+  });
+
+  it("entrega parcial: el resto va a solicitud de compra y la solicitud sigue abierta hasta completarse", async () => {
+    const id = await rodamiento();
+    await registrarEntrada(db, bodeguero, { repuestoId: id, almacenId: panol, cantidad: 2, costoUnitario: 500 });
+    const ot = await crearOt(db, jefe, { activoId, tipo: "CORRECTIVA", prioridad: "MEDIA", especialidadId: esp, descripcion: "x" });
+    const sol = await solicitarRepuesto(db, tecnico, { otId: ot.id, cantidad: 5, descripcion: "Rodamiento 6204", repuestoId: id });
+    const fila = async () => (await db.select().from(schema.solicitudesRepuesto).where(eq(schema.solicitudesRepuesto.id, sol)))[0];
+    const { scId } = await entregarSolicitud(db, bodeguero, sol, { repuestoId: id, almacenId: panol, cantidad: 2, pedirResto: true });
+    expect(await fila()).toMatchObject({ estado: "PENDIENTE", entregada: 2, scId });
+    const [sc] = await db.select().from(schema.solicitudesCompra);
+    expect(sc).toMatchObject({ id: scId, estado: "ENVIADA", solicitanteId: bodeguero.id });
+    expect(sc.nota).toContain(`OT ${ot.folio}`);
+    expect((await db.select().from(schema.lineasSc))[0]).toMatchObject({ repuestoId: id, cantidad: 3 });
+    expect(await avisos(tecnico.id)).toContain("Repuesto entregado en parte (2 de 5): Rodamiento 6204. El resto está en compra.");
+    expect(await avisos(jefe.id)).toContain("Solicitud de compra SC-00001 de Bodeguero por visar");
+    // Llega la compra: se entrega lo que faltaba y la solicitud se cierra. No se crea otra SC.
+    await registrarEntrada(db, bodeguero, { repuestoId: id, almacenId: panol, cantidad: 3, costoUnitario: 500 });
+    await entregarSolicitud(db, bodeguero, sol, { repuestoId: id, almacenId: panol, cantidad: 3, pedirResto: true });
+    expect(await fila()).toMatchObject({ estado: "ENTREGADA", entregada: 5 });
+    expect(await db.select().from(schema.solicitudesCompra)).toHaveLength(1);
+    // Parcial sin pedir el resto: se cierra con lo entregado.
+    await registrarEntrada(db, bodeguero, { repuestoId: id, almacenId: panol, cantidad: 1, costoUnitario: 500 });
+    const corta = await solicitarRepuesto(db, tecnico, { otId: ot.id, cantidad: 4, descripcion: "Rodamiento 6204", repuestoId: id });
+    await entregarSolicitud(db, bodeguero, corta, { repuestoId: id, almacenId: panol, cantidad: 1 });
+    expect((await db.select().from(schema.solicitudesRepuesto).where(eq(schema.solicitudesRepuesto.id, corta)))[0]).toMatchObject({ estado: "ENTREGADA", entregada: 1, scId: null });
+    // Sin existencias: todo a compra, una sola vez.
+    const nada = await solicitarRepuesto(db, tecnico, { otId: ot.id, cantidad: 2, descripcion: "Correa especial", codigoFabricante: "XPZ-1000" });
+    await expect(pedirCompraDeSolicitud(db, tecnico, nada)).rejects.toThrow("Solo bodega");
+    const sc2 = await pedirCompraDeSolicitud(db, bodeguero, nada);
+    expect((await db.select().from(schema.lineasSc).where(eq(schema.lineasSc.scId, sc2)))[0]).toMatchObject({ repuestoId: null, descripcion: "Correa especial · XPZ-1000", cantidad: 2 });
+    await expect(pedirCompraDeSolicitud(db, bodeguero, nada)).rejects.toThrow("ya está pedido en la solicitud de compra SC-00002");
   });
 
   it("devolución: vuelve a existencias sin cambiar el costo, y no más de lo entregado a la OT", async () => {

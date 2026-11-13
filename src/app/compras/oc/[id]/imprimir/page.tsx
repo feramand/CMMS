@@ -3,7 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BotonImprimir } from "@/componentes/boton-imprimir";
 import { ordenesCompra } from "@/db/schema";
-import { folioOc, ROLES_AUTORIZACION } from "@/lib/compras-core";
+import { folioOc, folioSc, ROLES_AUTORIZACION, ROLES_OBLIGATORIOS } from "@/lib/compras-core";
+import { EMPRESA } from "@/lib/empresa";
 import { listarOc } from "@/lib/consultas-compras";
 import { exigirPerfil } from "@/lib/dal";
 import { cant, monto } from "@/lib/formato";
@@ -33,8 +34,12 @@ export default async function ImprimirOc({ params }: { params: Promise<{ id: str
         </p>
       )}
       <header className="flex items-start justify-between border-b-2 border-slate-800 pb-3">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo-print-garage.png" alt="Print Garage" className="h-14" />
+        <div>
+          <p className="text-2xl font-black">{EMPRESA.nombre}</p>
+          {EMPRESA.rut && <p>RUT {EMPRESA.rut}</p>}
+          {EMPRESA.giro && <p>{EMPRESA.giro}</p>}
+          {EMPRESA.direccion && <p>{EMPRESA.direccion}</p>}
+        </div>
         <div className="text-right">
           <p className="text-2xl font-bold">Orden de compra {folioOc(oc.id)}</p>
           <p>Emitida el {fechaHora(oc.emitidaEn)}</p>
@@ -47,7 +52,9 @@ export default async function ImprimirOc({ params }: { params: Promise<{ id: str
           <p className="font-semibold">{oc.proveedor}</p>
           {oc.proveedorRut && <p>RUT {oc.proveedorRut}</p>}
           {oc.proveedorDireccion && <p>{oc.proveedorDireccion}</p>}
+          {oc.proveedorGiro && <p>{oc.proveedorGiro}</p>}
           {oc.proveedorContacto && <p>Contacto: {oc.proveedorContacto}</p>}
+          {(oc.proveedorTelefono || oc.proveedorEmail) && <p>{[oc.proveedorTelefono, oc.proveedorEmail].filter(Boolean).join(" · ")}</p>}
         </div>
         <div>
           <p>
@@ -61,6 +68,15 @@ export default async function ImprimirOc({ params }: { params: Promise<{ id: str
           </p>
           <p>
             <span className="text-slate-600">Emitida por:</span> {oc.emisor}
+          </p>
+          <p>
+            <span className="text-slate-600">Solicitud de compra:</span> {folioSc(oc.scId)}
+          </p>
+          <p>
+            <span className="text-slate-600">Cuenta contable:</span> {oc.cuenta ? `${oc.cuentaCodigo} · ${oc.cuenta}` : "—"}
+          </p>
+          <p>
+            <span className="text-slate-600">Centro de costo:</span> {oc.centro ? `${oc.centroCodigo} · ${oc.centro}` : "—"}
           </p>
         </div>
       </section>
@@ -91,7 +107,7 @@ export default async function ImprimirOc({ params }: { params: Promise<{ id: str
             <td className="pt-2 tabular-nums">{m(oc.neto)}</td>
           </tr>
           <tr>
-            <td colSpan={3}>IVA 19 %</td>
+            <td colSpan={3}>{oc.ivaExento ? "IVA (exenta)" : "IVA 19 %"}</td>
             <td className="tabular-nums">{m(oc.iva)}</td>
           </tr>
           <tr className="text-lg">
@@ -107,12 +123,19 @@ export default async function ImprimirOc({ params }: { params: Promise<{ id: str
       )}
       <section className="mt-4 rounded-lg border-2 border-slate-800 p-4">
         <p className="font-bold">{autorizada ? "Autorizada" : "Autorizaciones"}</p>
-        <div className="mt-2 grid grid-cols-2 gap-4">
+        <div className="mt-2 grid grid-cols-3 gap-4">
           {(Object.keys(ROLES_AUTORIZACION) as (keyof typeof ROLES_AUTORIZACION)[]).map((rol) => {
             const a = oc.autorizaciones.find((x) => x.rol === rol);
             return (
               <div key={rol}>
-                <p className="font-semibold">{a ? a.nombre : "Pendiente"}</p>
+                {/* Sin firma digital, el gerente general puede firmar a mano sobre la línea. */}
+                {a ? (
+                  <p className="font-semibold">{a.nombre}</p>
+                ) : ROLES_OBLIGATORIOS.includes(rol) ? (
+                  <p className="font-semibold">Pendiente</p>
+                ) : (
+                  <p className="mt-8 border-t border-slate-800 pt-1 text-sm">Firma</p>
+                )}
                 <p className="text-sm">{ROLES_AUTORIZACION[rol]}</p>
                 {a && <p className="text-sm">{fechaHora(a.fecha)}</p>}
               </div>
@@ -122,7 +145,7 @@ export default async function ImprimirOc({ params }: { params: Promise<{ id: str
         {autorizada && (
           <p className="mt-3 border-t border-slate-300 pt-2 text-sm">
             Código de verificación: <b className="tracking-widest">{oc.codigoVerificacion}</b>. Constancia interna de autorización emitida por
-            Print Garage; no es una firma electrónica avanzada.
+            el sistema de mantenimiento de {EMPRESA.nombre}; no es una firma electrónica avanzada.
           </p>
         )}
       </section>

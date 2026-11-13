@@ -1,10 +1,27 @@
-import { and, asc, eq, gte, lt } from "drizzle-orm";
+import { and, asc, eq, gte, lt, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
-import { activos, almacenes, centrosCosto, cuentasContables, movimientos, ordenesTrabajo, repuestos, usuarios } from "@/db/schema";
+import {
+  activos,
+  almacenes,
+  centrosCosto,
+  cuentasContables,
+  lineasRecepcion,
+  movimientos,
+  ordenesCompra,
+  ordenesTrabajo,
+  recepciones,
+  repuestos,
+  usuarios,
+} from "@/db/schema";
 import { TIPOS_MOVIMIENTO } from "@/lib/bodega-core";
 import { usuarioActual } from "@/lib/dal";
 import { fechaHora, inicioDelDiaEnChile } from "@/lib/tiempo";
+
+// Una entrada por orden de compra se imputa a la cuenta y al centro de costo de esa orden.
+const cuentaOc = alias(cuentasContables, "cuenta_oc");
+const centroOc = alias(centrosCosto, "centro_oc");
 
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -27,10 +44,10 @@ export async function GET(request: Request) {
       unidad: repuestos.unidad,
       cantidad: movimientos.cantidad,
       costo: movimientos.costoUnitario,
-      cuenta: cuentasContables.codigo,
-      cuentaNombre: cuentasContables.nombre,
-      centro: centrosCosto.codigo,
-      centroNombre: centrosCosto.nombre,
+      cuenta: sql<string | null>`coalesce(${cuentaOc.codigo}, ${cuentasContables.codigo})`,
+      cuentaNombre: sql<string | null>`coalesce(${cuentaOc.nombre}, ${cuentasContables.nombre})`,
+      centro: sql<string | null>`coalesce(${centroOc.codigo}, ${centrosCosto.codigo})`,
+      centroNombre: sql<string | null>`coalesce(${centroOc.nombre}, ${centrosCosto.nombre})`,
       folio: ordenesTrabajo.folio,
       maquina: activos.nombre,
       almacen: almacenes.nombre,
@@ -45,6 +62,11 @@ export async function GET(request: Request) {
     .leftJoin(activos, eq(activos.id, movimientos.activoId))
     .leftJoin(centrosCosto, eq(centrosCosto.id, activos.centroCostoId))
     .leftJoin(ordenesTrabajo, eq(ordenesTrabajo.id, movimientos.otId))
+    .leftJoin(lineasRecepcion, eq(lineasRecepcion.movimientoId, movimientos.id))
+    .leftJoin(recepciones, eq(recepciones.id, lineasRecepcion.recepcionId))
+    .leftJoin(ordenesCompra, eq(ordenesCompra.id, recepciones.ocId))
+    .leftJoin(cuentaOc, eq(cuentaOc.id, ordenesCompra.cuentaId))
+    .leftJoin(centroOc, eq(centroOc.id, ordenesCompra.centroCostoId))
     // Un traslado no cambia el valor de las existencias: no va a contabilidad.
     .where(and(gte(movimientos.fecha, inicioDelDiaEnChile(desde)), lt(movimientos.fecha, fin)))
     .orderBy(asc(movimientos.fecha), asc(movimientos.id));
