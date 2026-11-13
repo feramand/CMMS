@@ -398,8 +398,8 @@ export async function propuestaDeCompra(db: DB, repuestoId?: number) {
       stockMinimo: repuestos.stockMinimo,
       stockMaximo: repuestos.stockMaximo,
       total: sql<number>`coalesce((select sum(e.cantidad) from existencias e join almacenes a on a.id = e.almacen_id where e.repuesto_id = repuestos.id and not a.es_capex), 0)`.mapWith(Number),
-      // Pendiente de recibir en órdenes de compra vigentes.
-      enOc: sql<number>`coalesce((select sum(l.cantidad - l.recibida) from lineas_oc l join ordenes_compra o on o.id = l.oc_id where l.repuesto_id = repuestos.id and o.estado in ('EMITIDA','AUTORIZADA','RECIBIDA_PARCIAL')), 0)`.mapWith(Number),
+      // Pendiente de recibir en órdenes de compra vigentes. El saldo de una orden cerrada ya no viene en camino.
+      enOc: sql<number>`coalesce((select sum(l.cantidad - l.recibida) from lineas_oc l join ordenes_compra o on o.id = l.oc_id where l.repuesto_id = repuestos.id and o.estado in ('EMITIDA','AUTORIZADA','RECIBIDA_PARCIAL') and o.cerrada_en is null), 0)`.mapWith(Number),
       // Pedido en solicitudes de compra que todavía no son una orden.
       enSc: sql<number>`coalesce((select sum(l.cantidad) from lineas_sc l join solicitudes_compra s on s.id = l.sc_id where l.repuesto_id = repuestos.id and s.estado in ('ENVIADA','APROBADA') and not exists (select 1 from lineas_oc lo join ordenes_compra o on o.id = lo.oc_id where lo.linea_sc_id = l.id and o.estado in ('EMITIDA','AUTORIZADA','RECIBIDA_PARCIAL','RECIBIDA_TOTAL'))), 0)`.mapWith(Number),
     })

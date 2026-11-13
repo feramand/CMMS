@@ -433,7 +433,14 @@ describe.skipIf(!url)("compras (integración)", () => {
     const otra = await ocAutorizada(sc2);
     const [l2] = await db.select().from(schema.lineasOc).where(eq(schema.lineasOc.ocId, otra));
     await recibirOc(db, bodeguero, { ocId: otra, almacenId: central, cantidades: { [l2.id]: 1 } });
+    // Mientras está abierta, el saldo (3) cuenta como en camino; cerrada con motivo, deja de contar.
+    const enOc = async () => Number((await db.execute(sql`select coalesce(sum(l.cantidad - l.recibida), 0) n from lineas_oc l join ordenes_compra o on o.id = l.oc_id where o.estado = 'RECIBIDA_PARCIAL' and o.cerrada_en is null`)).rows[0].n);
+    expect(await enOc()).toBe(3);
+    await registrarSalida(db, bodeguero, { repuestoId: rod, almacenId: central, cantidad: 4 }); // quedan 1 de 5 → bajo el mínimo de 4
+    expect((await propuestaDeCompra(db))[0]).toMatchObject({ total: 1, enCamino: 11 }); // 3 de la OC + 8 de la presolicitud automática
     await cerrarOc(db, compras, otra, "El proveedor descontinuó el repuesto");
+    expect(await oc(otra)).toMatchObject({ estado: "RECIBIDA_PARCIAL", notaCierre: "El proveedor descontinuó el repuesto" });
+    expect((await propuestaDeCompra(db))[0]).toMatchObject({ total: 1, enCamino: 8, sugerida: 3 }); // el saldo cerrado vuelve a proponerse
     await expect(recibirOc(db, bodeguero, { ocId: otra, almacenId: central, cantidades: { [l2.id]: 1 } })).rejects.toThrow("no admite recepciones");
   });
 
