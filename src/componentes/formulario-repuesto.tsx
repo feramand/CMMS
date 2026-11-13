@@ -24,10 +24,16 @@ export function FormularioRepuesto({
         Código interno
         <input name="codigo" required defaultValue={r?.codigo} autoCapitalize="characters" className={campo} />
       </label>
-      <label className="flex flex-col gap-1 text-sm font-semibold">
-        Código de parte del fabricante (opcional)
-        <input name="codigoFabricante" defaultValue={r?.codigoFabricante ?? ""} className={campo} />
-      </label>
+      <div className="flex flex-col gap-1">
+        <label className="flex flex-col gap-1 text-sm font-semibold">
+          Código de parte del fabricante
+          <input name="codigoFabricante" defaultValue={r?.codigoFabricante ?? ""} className={campo} />
+        </label>
+        <label className="flex min-h-11 items-center gap-2 text-sm">
+          <input type="checkbox" name="sinCodigoFabricante" value="si" defaultChecked={r?.sinCodigoFabricante ?? false} className="h-5 w-5" />
+          Sin código de fabricante (repuesto genérico)
+        </label>
+      </div>
       <label className="flex flex-col gap-1 text-sm font-semibold sm:col-span-2">
         Marca (opcional)
         <input name="marca" defaultValue={r?.marca ?? ""} className={campo} />

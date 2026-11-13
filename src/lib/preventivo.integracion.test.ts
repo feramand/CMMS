@@ -317,36 +317,38 @@ it("carga las cartillas de una máquina desde su planilla, con la ficha completa
         // Pie de la planilla: sin código ni pauta, se ignora aunque tenga texto en otras columnas.
         { _fila: "90", zona: "Estado de la Orden de Trabajo", tarea: "Totalizador:" },
       ];
-      const r = await importarCartilla(db, jefe, maquina, filas);
+      const r = await importarCartilla(db, jefe, maquina, filas, dia("2026-03-01"));
+      // A, B y AB forman una sola cartilla que se alterna y se mide por tiempo, aunque la planilla traiga giros.
       expect(r).toEqual({
         tareas: 4,
         cartillas: [
-          { nombre: "Pauta A", tareas: 2, intervalo: "400.000 giros" },
-          { nombre: "Pauta B", tareas: 2, intervalo: "400.000 giros" },
+          { nombre: "Pauta A/B", tareas: 3, intervalo: "15 días" },
           { nombre: "Pauta MENSUAL", tareas: 1, intervalo: "1.600.000 giros" },
         ],
       });
       const cargadas = await db.select().from(schema.pautas).orderBy(schema.pautas.id);
       expect(cargadas.map((p) => [p.nombre, p.tipo, p.intervalo, p.frecuencia])).toEqual([
-        ["Pauta A", "GIROS", 400_000, "Quincenal"], ["Pauta B", "GIROS", 400_000, "Quincenal"], ["Pauta MENSUAL", "GIROS", 1_600_000, "Bimestral"],
+        ["Pauta A/B", "TIEMPO", 15, "Quincenal"], ["Pauta MENSUAL", "GIROS", 1_600_000, "Bimestral"],
       ]);
-      // Parten en el contador actual de la máquina.
-      expect(await abierto(cargadas[0].id)).toMatchObject({ estado: "PROGRAMADA", baseGiros: 1_000_000, objetivoGiros: 1_400_000 });
-      const deA = await db.select().from(schema.actividadesPauta).where(eq(schema.actividadesPauta.pautaId, cargadas[0].id)).orderBy(schema.actividadesPauta.orden);
-      expect(deA.map((a) => [a.codigo, a.operador, a.especialidadId, a.detencion, a.minutos])).toEqual([
-        ["MPO-001", true, null, "SI", 20], ["MPO-002", true, espMec, "PARCIAL", 20],
+      const ab = cargadas[0].id;
+      expect(await abierto(ab)).toMatchObject({ estado: "PROGRAMADA", baseFecha: "2026-03-01", objetivoFecha: "2026-03-16", variante: "A" });
+      // La de giros parte en el contador actual de la máquina.
+      expect(await abierto(cargadas[1].id)).toMatchObject({ estado: "PROGRAMADA", baseGiros: 1_000_000, objetivoGiros: 2_600_000, variante: null });
+      const tareas = await db.select().from(schema.actividadesPauta).where(eq(schema.actividadesPauta.pautaId, ab)).orderBy(schema.actividadesPauta.orden);
+      expect(tareas.map((a) => [a.codigo, a.variante, a.operador, a.especialidadId, a.detencion, a.minutos])).toEqual([
+        ["MPO-001", "A", true, null, "SI", 20], ["MPO-002", null, true, espMec, "PARCIAL", 20], ["MPO-003", "B", false, espEle, "NO", null],
       ]);
-      expect(deA[0]).toMatchObject({ zona: "Marcador", subsistema: "Cabezal aspirador", componente: "Componente 1", tipoTarea: "Limpieza", insumos: "Paño" });
-      const deB = await db.select().from(schema.actividadesPauta).where(eq(schema.actividadesPauta.pautaId, cargadas[1].id)).orderBy(schema.actividadesPauta.orden);
-      expect(deB.map((a) => [a.codigo, a.especialidadId, a.detencion, a.minutos])).toEqual([["MPO-002", espMec, "PARCIAL", 20], ["MPO-003", espEle, "NO", null]]);
+      expect(tareas[0]).toMatchObject({ zona: "Marcador", subsistema: "Cabezal aspirador", componente: "Componente 1", tipoTarea: "Limpieza", insumos: "Paño" });
       // La cartilla también deja la ubicación de cada tarea en el árbol de sistemas de la máquina.
       const arbol = await db.select().from(schema.sectores).where(eq(schema.sectores.activoId, maquina));
       expect(arbol.map((n) => n.nombre).sort()).toEqual(["Cabezal aspirador", "Componente 1", "Componente 2", "Componente 3", "Componente 4", "Marcador"]);
 
-      // Al liberarse, la tarea compartida la marca el operador o el mecánico, y el ciclo conserva la ficha.
-      await leer(1_320_000);
-      const c = await abierto(cargadas[0].id);
+      // Vuelta A: las tareas A y las AB. La compartida la marca el operador o el mecánico, y el ciclo conserva la ficha.
+      await evaluarPautas(db, { ahora: dia("2026-03-13") });
+      const c = await abierto(ab);
+      expect(c).toMatchObject({ estado: "LIBERADA", variante: "A" });
       const [soloOperador, compartida] = await lista(c.id);
+      expect((await lista(c.id)).map((a) => a.codigo)).toEqual(["MPO-001", "MPO-002"]);
       expect(compartida).toMatchObject({ codigo: "MPO-002", zona: "Marcador", detencion: "PARCIAL", minutos: 20, operador: true, especialidadId: espMec });
       await expect(marcarActividad(db, ele, compartida.id, "HECHA")).rejects.toThrow("la hacen los operadores");
       await marcarActividad(db, mec, compartida.id, "HECHA");
@@ -354,12 +356,29 @@ it("carga las cartillas de una máquina desde su planilla, con la ficha completa
       expect((await lista(c.id))[0]).toMatchObject({ estado: "NO_REALIZADA", motivo: "EN_PRODUCCION", nota: null });
       await expect(marcarActividad(db, operador, soloOperador.id, "NO_REALIZADA", undefined, undefined, "OTRO")).rejects.toThrow("Explica por qué");
 
+      // Ejecutada la A, a la vuelta siguiente toca la B: las tareas B y las AB.
+      await finalizarCiclo(db, mec, c.id, {}, dia("2026-03-14"));
+      expect(await abierto(ab)).toMatchObject({ estado: "PROGRAMADA", baseFecha: "2026-03-14", variante: "B" });
+      await evaluarPautas(db, { ahora: dia("2026-03-27") });
+      const vueltaB = await abierto(ab);
+      expect(vueltaB).toMatchObject({ estado: "LIBERADA", variante: "B" });
+      expect((await lista(vueltaB.id)).map((a) => a.codigo)).toEqual(["MPO-002", "MPO-003"]);
+      // Si la B queda incumplida, se repite la B: sus tareas no esperan otra vuelta completa.
+      await evaluarPautas(db, { ahora: dia("2026-04-02") });
+      const repetida = await abierto(ab);
+      expect(repetida.id).not.toBe(vueltaB.id);
+      expect(repetida).toMatchObject({ estado: "LIBERADA", variante: "B", baseFecha: "2026-03-29" });
+      expect((await lista(repetida.id)).map((a) => a.codigo)).toEqual(["MPO-002", "MPO-003"]);
+      // Una tarea nueva puede ir en una sola vuelta.
+      await agregarActividad(db, jefe, ab, "Revisar correas", "", "a");
+      await expect(agregarActividad(db, jefe, ab, "x", "", "AB")).rejects.toThrow("una sola letra");
+
       // Todo o nada, con el número de fila de la planilla en cada error.
       const mala = [
         fila(10, "C", "Pintor"),
         fila(11, "C", "Operador", { detencion: "A veces" }),
         fila(11, "C", "Operador"),
-        fila(12, "A", "Operador"),
+        fila(12, "MENSUAL", "Operador"),
         fila(13, "D", "Operador", { equivalencia: "", frecuencia: "Cuando se pueda" }),
       ];
       const error = await importarCartilla(db, jefe, maquina, mala).catch((e) => e);
@@ -367,10 +386,10 @@ it("carga las cartillas de una máquina desde su planilla, con la ficha completa
         'Fila 18: no reconozco el encargado "Pintor". Usa Operador, Mecánico, Eléctrico u otra especialidad.',
         'Fila 19: la detención debe ser Sí, No o Parcial (dice "A veces").',
         "Fila 19: el código MPO-011 está repetido.",
-        "Pauta A: esta máquina ya tiene una cartilla con ese nombre.",
+        "Pauta MENSUAL: esta máquina ya tiene una cartilla con ese nombre.",
         "Pauta D: indica la equivalencia en giros o una frecuencia conocida (quincenal, mensual, semestral, anual…).",
       ]);
-      expect(await db.select().from(schema.pautas)).toHaveLength(3);
+      expect(await db.select().from(schema.pautas)).toHaveLength(2);
       await expect(importarCartilla(db, mec, maquina, filas)).rejects.toThrow("No tienes permiso");
     });
   });
@@ -494,7 +513,13 @@ it("carga las cartillas de una máquina desde su planilla, con la ficha completa
       expect(claveValida("corta", "secreta-123")).toBe(false);
       expect(claveValida(null, "secreta-123")).toBe(false);
       expect(claveValida("x", undefined)).toBe(false);
-      await expect(guardarCodigo(db, jefe, { codigo: "X1", categoria: "Servicios generales" })).rejects.toThrow("no es una categoría válida");
+      await expect(guardarCodigo(db, jefe, { codigo: "X1", categoria: "Servicios generales" })).rejects.toThrow("no es un tipo válido");
+      // Los códigos se asignan por tipo de Breakdown Downtime; «BD General» es la falla sin clasificar.
+      for (const [codigo, tipo] of [["BD1", "BD Mecánico"], ["BD2", "bd eléctrico"], ["BD3", "BD SAC"], ["BD4", "BD General"]]) {
+        await guardarCodigo(db, jefe, { codigo, categoria: tipo });
+      }
+      const tipos = await db.select().from(schema.codigosFallaMetrics);
+      expect(["BD1", "BD2", "BD3", "BD4"].map((c) => tipos.find((x) => x.codigo === c)?.categoria)).toEqual(["MECANICA", "ELECTRICA", "SAC", "INDETERMINADA"]);
       await expect(guardarCodigo(db, mec, { codigo: "X1", categoria: "SAC" })).rejects.toThrow("Solo jefe");
     });
   });

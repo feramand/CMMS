@@ -68,9 +68,6 @@ export async function crearSolicitud(
   if (actor.perfil === "BODEGUERO" || actor.perfil === "ABASTECIMIENTO") {
     throw new ErrorDeNegocio("Tu perfil no puede reportar fallas.");
   }
-  if (datos.categoria === "SERVICIOS_GENERALES" && !esAdministrativo(actor)) {
-    throw new ErrorDeNegocio("Elige el tipo de falla.");
-  }
   const origen = actor.perfil === "OPERADOR" ? "OPERADOR" : actor.perfil === "TECNICO" ? "TECNICO" : "JEFE";
   return registrarSolicitud(db, { ...datos, origen, creadaPor: actor.id });
 }

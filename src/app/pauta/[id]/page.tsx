@@ -109,7 +109,10 @@ export default async function EjecutarPauta({ params, searchParams }: Props) {
       <main className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-4 p-4">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <h1 className="text-2xl font-bold">{pauta.nombre}</h1>
+            <h1 className="text-2xl font-bold">
+              {pauta.nombre}
+              {c.variante ? ` · vuelta ${c.variante}` : ""}
+            </h1>
             <p className="text-slate-600">
               {f.activo} · {f.especialidad}
             </p>

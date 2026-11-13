@@ -5,7 +5,7 @@ Aplicación web adaptable (computador y celular) que se instala en un servidor d
 
 ## Estado
 
-Las etapas 0 a 4 están programadas y probadas con 163 pruebas automáticas. Falta probarlas
+Las etapas 0 a 5 están programadas y probadas con 172 pruebas automáticas. Falta probarlas
 con datos reales en el servidor de la empresa.
 
 | Etapa | Contenido | Estado |
@@ -15,7 +15,7 @@ con datos reales en el servidor de la empresa.
 | 2 | Mantenimiento preventivo e integración con Metrics | Programada; falta el conector real |
 | 3 | Bodega de repuestos | Programada; falta la carga desde Maintscape |
 | 4 | Compras, costos y contabilidad | Programada; falta el formato para Fin700 |
-| 5 | Indicadores y reportes | Pendiente (ya existe el downtime por falla) |
+| 5 | Indicadores y reportes | Programada |
 | 6 | Modo sin conexión | Pendiente |
 
 **Base.** Ingreso con PIN o contraseña, seis perfiles con permisos validados en el servidor,
@@ -32,10 +32,14 @@ causa raíz opcional, fotos, tablero Kanban, avisos y notificaciones push.
 actividades por grupo (operador o especialidad), liberación al 80 %, límite al 120 %, carga del
 plan desde Excel e indicador de downtime por falla.
 
+**Cartillas que se alternan.** Si la detención no alcanza para toda la cartilla de menor intervalo,
+se divide en dos vueltas: una vez se hacen las tareas A y a la siguiente las B; las tareas AB van
+siempre. Esa cartilla se mide por tiempo. Una vuelta incumplida se repite.
+
 **Metrics.** Recibe lecturas de contador y detenciones clasificadas por HTTPS
 (`/api/metrics/giros` y `/api/metrics/detenciones`), con clave en `METRICS_API_KEY`.
 
-**Bodega.** Catálogo de repuestos (código interno, código de fabricante, marca, ubicación),
+**Bodega.** Catálogo de repuestos (código interno, código de fabricante obligatorio salvo repuesto genérico declarado, marca, ubicación),
 tres almacenes, existencias solo por movimientos, costo por precio medio ponderado, inventarios,
 carga desde Excel. Los repuestos se piden desde la orden de trabajo; una entrega parcial manda
 el resto a solicitud de compra.
@@ -45,6 +49,16 @@ más órdenes de compra por solicitud, cinco monedas, IVA o exenta, cuenta conta
 costo, cotización adjunta, dos autorizaciones obligatorias (jefe de mantenimiento y gerente de
 producción) y una opcional (gerente general), impresión con el formato de la empresa, recepción
 parcial o total y Excel de movimientos valorizados para contabilidad.
+
+**Detenciones.** Print Garage solo recibe de Metrics los códigos de Breakdown Downtime (BD): BD
+Mecánico, BD Eléctrico, BD SAC y BD General (la falla sin clasificar). Los demás Delay (ajustes
+operacionales, esperas) se ignoran. El MTTR y el MTBF se calculan solo sobre BD.
+
+**Indicadores y reportes.** Por período: Breakdown Downtime por máquina y por tipo, MTTR, tiempo de respuesta y
+de reparación, MTBF por máquina, cumplimiento del preventivo (a tiempo, con atraso, incumplidas),
+solicitudes resueltas sin orden de trabajo, fallas recurrentes y trabajo por técnico en orden
+alfabético, sin ranking. Todo se descarga en Excel. La base de soluciones reúne lo que se hizo
+ante cada falla, con búsqueda por máquina y texto.
 
 ## Tecnología
 

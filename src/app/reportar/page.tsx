@@ -8,13 +8,15 @@ import { db } from "@/db";
 import { solicitudes, type Categoria } from "@/db/schema";
 import { listarActivosVigentes } from "@/lib/consultas";
 import { exigirPerfil } from "@/lib/dal";
-import { puedeEntrarAdmin, rutaInicio } from "@/lib/perfiles";
+import { rutaInicio } from "@/lib/perfiles";
 
 const OPCIONES: { valor: Categoria; nombre: string }[] = [
   { valor: "MECANICA", nombre: "Mecánica" },
   { valor: "ELECTRICA", nombre: "Eléctrica" },
   { valor: "INDETERMINADA", nombre: "No sé" },
   { valor: "SAC", nombre: "Apoyo crítico (SAC)" },
+  // Infraestructura: solo se reporta a mano (Metrics no la envía) y no cuenta como detención de máquina (BD).
+  { valor: "SERVICIOS_GENERALES", nombre: "Servicios generales (infraestructura)" },
 ];
 
 export default async function Reportar({ searchParams }: { searchParams: Promise<{ error?: string; activo?: string }> }) {
@@ -32,9 +34,7 @@ export default async function Reportar({ searchParams }: { searchParams: Promise
   // Primero la máquina cuyo QR se escaneó; si no viene de un QR, la última que usó esta persona.
   const primera = lista.some((a) => a.id === Number(pedido)) ? Number(pedido) : ultima?.activoId;
   const ordenada = [...lista].sort((a, b) => Number(b.id === primera) - Number(a.id === primera));
-  const opciones = puedeEntrarAdmin(usuario.perfil)
-    ? [...OPCIONES, { valor: "SERVICIOS_GENERALES" as Categoria, nombre: "Servicios generales" }]
-    : OPCIONES;
+  const opciones = OPCIONES;
   return (
     <>
       <Encabezado usuario={usuario} />

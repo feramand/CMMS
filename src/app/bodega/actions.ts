@@ -66,6 +66,7 @@ function datosRepuesto(f: FormData): DatosRepuesto {
     codigo: texto(f.get("codigo")),
     descripcion: texto(f.get("descripcion")),
     codigoFabricante: texto(f.get("codigoFabricante")),
+    sinCodigoFabricante: f.get("sinCodigoFabricante") === "si",
     marca: texto(f.get("marca")),
     cuentaId: entero(f.get("cuentaId")) || null,
     unidad: texto(f.get("unidad")),

@@ -454,6 +454,8 @@ export const actividadesPauta = pgTable("actividades_pauta", {
   // de los dos (operador y especialidad a la vez). Sin ninguno: la especialidad responsable.
   operador: boolean("operador").notNull().default(false),
   especialidadId: integer("especialidad_id").references(() => especialidades.id),
+  // Cartilla que se alterna: la tarea va solo en la vuelta «A» o solo en la «B». null = en todas (las «AB»).
+  variante: text("variante"),
   activa: boolean("activa").notNull().default(true),
 });
 
@@ -487,6 +489,8 @@ export const ciclosPauta = pgTable("ciclos_pauta", {
   ejecutadoPor: integer("ejecutado_por").references(() => usuarios.id),
   girosReales: bigint("giros_reales", { mode: "number" }),
   observaciones: text("observaciones"),
+  // Vuelta que toca en una cartilla que se alterna («A» o «B»); null = la cartilla no se alterna.
+  variante: text("variante"),
   // Ciclo de una cartilla mayor, ya liberada, que incluye a esta: mientras dure, esta no se ejecuta por separado.
   incluidoEnCicloId: integer("incluido_en_ciclo_id").references((): AnyPgColumn => ciclosPauta.id, { onDelete: "set null" }),
 });
@@ -557,6 +561,8 @@ export const repuestos = pgTable("repuestos", {
   id: serial("id").primaryKey(),
   codigo: text("codigo").notNull().unique(),
   codigoFabricante: text("codigo_fabricante"),
+  // Declarado a propósito: el repuesto es genérico y no tiene código de fabricante.
+  sinCodigoFabricante: boolean("sin_codigo_fabricante").notNull().default(false),
   marca: text("marca"),
   descripcion: text("descripcion").notNull(),
   unidad: text("unidad").notNull().default("unidad"),

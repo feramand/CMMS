@@ -14,13 +14,17 @@ import {
   type Categoria,
 } from "@/db/schema";
 import type { UsuarioSesion } from "./auth-core";
-import { nombreCategoria } from "./categorias";
+import { nombreBd, TIPOS_BD } from "./categorias";
 import { registrarLectura } from "./pautas-core";
 import { registrarSolicitud } from "./sat-core";
 import { ErrorDeNegocio } from "./usuarios-core";
 
-/** Categorías que puede tener un código de falla de Metrics. */
-export const CATEGORIAS_METRICS: Categoria[] = ["MECANICA", "ELECTRICA", "INDETERMINADA", "SAC"];
+/**
+ * Tipos de Breakdown Downtime (BD) que puede tener un código de Metrics: BD Mecánico, BD Eléctrico,
+ * BD SAC y BD General (el que llega sin clasificar). Solo estos códigos disparan una solicitud;
+ * los demás Delay (ajustes operacionales, esperas) se ignoran.
+ */
+export const CATEGORIAS_METRICS: Categoria[] = TIPOS_BD.map((t) => t.valor);
 
 export type Resultado = { resultado: "PROCESADO" | "IGNORADO" | "ERROR"; detalle: string };
 
@@ -114,8 +118,8 @@ async function procesarDetencion(db: DB, cuerpo: Record<string, unknown>): Promi
     return {
       resultado: "PROCESADO",
       detalle: duplicada
-        ? `${maquina.nombre}: se sumó a la solicitud ${solicitudId}, ya abierta (${nombreCategoria(codigo.categoria)}).`
-        : `${maquina.nombre}: solicitud ${solicitudId} creada (${nombreCategoria(codigo.categoria)}).`,
+        ? `${maquina.nombre}: se sumó a la solicitud ${solicitudId}, ya abierta (${nombreBd(codigo.categoria)}).`
+        : `${maquina.nombre}: solicitud ${solicitudId} creada (${nombreBd(codigo.categoria)}).`,
     };
   } catch (e) {
     if (e instanceof ErrorDeNegocio) return { resultado: "IGNORADO", detalle: e.message };
@@ -145,11 +149,15 @@ function exigirAdmin(actor: UsuarioSesion): void {
 }
 
 export function categoriaMetrics(valor: string): Categoria {
-  const limpio = valor.trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-  const alias: Record<string, Categoria> = { MECANICO: "MECANICA", ELECTRICO: "ELECTRICA", INDETERMINADO: "INDETERMINADA", "NO SE": "INDETERMINADA" };
+  // Se acepta con o sin el prefijo «BD»: "BD Mecánico", "Mecánica", "BD General", "Indeterminada"…
+  const limpio = valor.trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/^BD\s+/, "");
+  const alias: Record<string, Categoria> = {
+    MECANICO: "MECANICA", ELECTRICO: "ELECTRICA", INDETERMINADO: "INDETERMINADA", "NO SE": "INDETERMINADA",
+    GENERAL: "INDETERMINADA", INDEFINIDO: "INDETERMINADA", INDEFINIDA: "INDETERMINADA",
+  };
   const c = (alias[limpio] ?? limpio) as Categoria;
   if (!categoriaEnum.enumValues.includes(c) || !CATEGORIAS_METRICS.includes(c)) {
-    throw new ErrorDeNegocio(`"${valor}" no es una categoría válida: usa Mecánica, Eléctrica, Indeterminada o SAC.`);
+    throw new ErrorDeNegocio(`"${valor}" no es un tipo válido: usa BD Mecánico, BD Eléctrico, BD SAC o BD General.`);
   }
   return c;
 }

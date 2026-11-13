@@ -84,6 +84,8 @@ function cantidadValida(n: number, que = "La cantidad"): number {
 export type DatosRepuesto = {
   codigo: string;
   codigoFabricante?: string | null;
+  /** Repuesto genérico, sin código de fabricante: hay que declararlo para dejar el código vacío. */
+  sinCodigoFabricante?: boolean;
   marca?: string | null;
   /** Cuenta contable a la que se imputa. undefined: no se toca. */
   cuentaId?: number | null;
@@ -101,6 +103,9 @@ function exigirCatalogo(actor: UsuarioSesion) {
   }
 }
 
+/** En la planilla de carga, «Sin código» (o «S/C») en la columna del fabricante declara un repuesto genérico. */
+const SIN_CODIGO = /^(sin\s*c[oó]digo|s\/c)$/i;
+
 function limpiarRepuesto(d: DatosRepuesto) {
   const codigo = d.codigo.trim().toUpperCase();
   const descripcion = d.descripcion.trim();
@@ -112,10 +117,19 @@ function limpiarRepuesto(d: DatosRepuesto) {
   if (stockMaximo !== null && (!Number.isFinite(stockMaximo) || stockMaximo < stockMinimo)) {
     throw new ErrorDeNegocio("El stock máximo no puede ser menor que el mínimo.");
   }
+  // El código de fabricante es obligatorio. La única salida es declarar que el repuesto no tiene
+  // (un rodamiento o un cable genérico): así no queda en blanco por descuido.
+  const escrito = d.codigoFabricante?.trim() || "";
+  const declarado = SIN_CODIGO.test(escrito);
+  const codigoFabricante = declarado ? null : escrito || null;
+  if (!codigoFabricante && !declarado && !d.sinCodigoFabricante) {
+    throw new ErrorDeNegocio("Falta el código de fabricante. Si el repuesto es genérico y no tiene, marca «Sin código de fabricante».");
+  }
   return {
     codigo,
     descripcion,
-    codigoFabricante: d.codigoFabricante?.trim() || null,
+    codigoFabricante,
+    sinCodigoFabricante: !codigoFabricante,
     marca: d.marca?.trim() || null,
     ...(d.cuentaId === undefined ? {} : { cuentaId: d.cuentaId || null }),
     unidad: d.unidad?.trim().toLowerCase() || "unidad",
@@ -643,7 +657,7 @@ export async function anularToma(db: DB, actor: UsuarioSesion, tomaId: number): 
 export const COLUMNAS_REPUESTOS: Columna[] = [
   { clave: "codigo", titulo: "Código interno", obligatoria: true, ejemplo: "ROD-6204" },
   { clave: "descripcion", titulo: "Descripción", obligatoria: true, ejemplo: "Rodamiento 6204 2RS" },
-  { clave: "codigoFabricante", titulo: "Código de fabricante", ejemplo: "6204-2RSH" },
+  { clave: "codigoFabricante", titulo: "Código de fabricante", obligatoria: true, ejemplo: "6204-2RSH" },
   { clave: "marca", titulo: "Marca", ejemplo: "SKF" },
   { clave: "unidad", titulo: "Unidad", ejemplo: "unidad" },
   { clave: "familia", titulo: "Familia", ejemplo: "Rodamientos" },

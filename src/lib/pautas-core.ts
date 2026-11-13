@@ -161,7 +161,30 @@ export type TareaDatos = GrupoActividad & {
   detencion?: string | null;
   insumos?: string | null;
   minutos?: number | null;
+  /** Vuelta en que va la tarea si la cartilla se alterna («A», «B»); vacío = en todas. */
+  variante?: string | null;
 };
+
+/** Vueltas de una cartilla que se alterna, en orden («A», «B»). Vacío: la cartilla no se alterna. */
+async function variantesDe(ex: Ejecutor, pautaId: number): Promise<string[]> {
+  const filas = await ex
+    .selectDistinct({ variante: actividadesPauta.variante })
+    .from(actividadesPauta)
+    .where(and(eq(actividadesPauta.pautaId, pautaId), eq(actividadesPauta.activa, true)));
+  return filas.map((f) => f.variante).filter((v): v is string => Boolean(v)).sort();
+}
+
+/**
+ * Vuelta que le toca al ciclo nuevo de una cartilla que se alterna. Después de una vuelta
+ * ejecutada toca la siguiente (A → B → A); si la anterior quedó incumplida, se repite la misma
+ * para que sus tareas no queden dos intervalos sin hacerse.
+ */
+async function varianteNueva(ex: Ejecutor, pautaId: number, previa?: { variante: string | null; ejecutada: boolean }): Promise<string | null> {
+  const lista = await variantesDe(ex, pautaId);
+  if (lista.length === 0) return null;
+  if (!previa?.variante || !lista.includes(previa.variante)) return lista[0];
+  return previa.ejecutada ? lista[(lista.indexOf(previa.variante) + 1) % lista.length] : previa.variante;
+}
 
 /** Técnicos activos de una especialidad: reciben los avisos de sus pautas. */
 async function tecnicosDe(ex: Ejecutor, especialidadId: number): Promise<number[]> {
@@ -196,6 +219,21 @@ async function liberar(ex: Ejecutor, pauta: Pauta, maquina: string, cicloId: num
     .where(eq(ciclosPauta.id, cicloId));
   const inferiores = await inferioresDe(ex, pauta);
   const todas = [pauta, ...inferiores];
+  // Vuelta que toca en cada cartilla que se alterna: la de este ciclo y la del ciclo abierto de cada menor.
+  const abiertos = await ex
+    .select({ id: ciclosPauta.id, pautaId: ciclosPauta.pautaId, variante: ciclosPauta.variante })
+    .from(ciclosPauta)
+    .where(and(inArray(ciclosPauta.pautaId, todas.map((p) => p.id)), inArray(ciclosPauta.estado, ["PROGRAMADA", "LIBERADA"])));
+  const vuelta = new Map<number, string | null>();
+  for (const p of todas) {
+    const abierto = abiertos.find((c) => (p.id === pauta.id ? c.id === cicloId : c.pautaId === p.id));
+    let variante = abierto?.variante ?? null;
+    if (!variante) {
+      variante = await varianteNueva(ex, p.id);
+      if (variante && abierto) await ex.update(ciclosPauta).set({ variante }).where(eq(ciclosPauta.id, abierto.id));
+    }
+    vuelta.set(p.id, variante);
+  }
   const actividades = await ex
     .select()
     .from(actividadesPauta)
@@ -206,7 +244,7 @@ async function liberar(ex: Ejecutor, pauta: Pauta, maquina: string, cicloId: num
   const vistos = new Set<string>();
   const lista = todas.flatMap((dueña) =>
     actividades
-      .filter((a) => a.pautaId === dueña.id)
+      .filter((a) => a.pautaId === dueña.id && (!a.variante || a.variante === vuelta.get(dueña.id)))
       .filter((a) => {
         if (!a.codigo) return true;
         if (vistos.has(a.codigo)) return false;
@@ -309,7 +347,11 @@ async function evaluarPauta(ex: Ejecutor, pautaId: number, generales: Porcentaje
       const base = pauta.tipo === "GIROS" ? ciclo.objetivoGiros! : ciclo.objetivoFecha!;
       const [siguiente] = await ex
         .insert(ciclosPauta)
-        .values({ pautaId, ...hitosDe(pauta, base, p) })
+        .values({
+          pautaId,
+          ...hitosDe(pauta, base, p),
+          variante: await varianteNueva(ex, pautaId, { variante: ciclo.variante, ejecutada: false }),
+        })
         .returning({ id: ciclosPauta.id });
       await notificar(
         ex,
@@ -489,7 +531,11 @@ export async function crearPauta(db: DB, actor: UsuarioSesion, datos: DatosPauta
     if (actividades.length) {
       await tx.insert(actividadesPauta).values(actividades.map((a, i) => ({ pautaId: nueva.id, orden: i + 1, ...a })));
     }
-    await tx.insert(ciclosPauta).values({ pautaId: nueva.id, ...hitosDe(nueva, base, porcentajesDe(nueva, await porcentajesGenerales(tx))) });
+    await tx.insert(ciclosPauta).values({
+      pautaId: nueva.id,
+      ...hitosDe(nueva, base, porcentajesDe(nueva, await porcentajesGenerales(tx))),
+      variante: await varianteNueva(tx, nueva.id),
+    });
     await tx.insert(bitacora).values({
       usuarioId: actor.id,
       accion: "CREAR_PAUTA",
@@ -567,7 +613,11 @@ export async function agregarActividad(
   descripcion: string,
   /** "OPERADOR", el id de una especialidad, o vacío para la especialidad responsable. */
   grupo = "",
+  /** «A» o «B» si la cartilla se alterna y la tarea va solo en esa vuelta; vacío = en todas. */
+  varianteCruda = "",
 ): Promise<void> {
+  const variante = varianteCruda.trim().toUpperCase() || null;
+  if (variante && !/^[A-Z]$/.test(variante)) throw new ErrorDeNegocio("La vuelta de la cartilla es una sola letra: A o B.");
   exigirGestion(actor);
   const texto = descripcion.trim();
   if (!texto) throw new ErrorDeNegocio("Describe la actividad.");
@@ -581,7 +631,7 @@ export async function agregarActividad(
   const existentes = await db.select({ orden: actividadesPauta.orden }).from(actividadesPauta).where(eq(actividadesPauta.pautaId, pautaId));
   const [pauta] = await db.select({ id: pautas.id }).from(pautas).where(eq(pautas.id, pautaId));
   if (!pauta) throw new ErrorDeNegocio("La pauta no existe.");
-  await db.insert(actividadesPauta).values({ pautaId, descripcion: texto, orden: Math.max(0, ...existentes.map((e) => e.orden)) + 1, ...quien });
+  await db.insert(actividadesPauta).values({ pautaId, descripcion: texto, orden: Math.max(0, ...existentes.map((e) => e.orden)) + 1, variante, ...quien });
 }
 
 /** Quita una actividad del checklist. Los ciclos ya liberados conservan su copia. */
@@ -754,7 +804,11 @@ export async function finalizarCiclo(
       .where(eq(activos.id, pauta.activoId));
     const base = pauta.tipo === "GIROS" ? girosReales! : hoy;
     const generales = await porcentajesGenerales(tx);
-    await tx.insert(ciclosPauta).values({ pautaId: pauta.id, ...hitosDe(pauta, base, porcentajesDe(pauta, generales)) });
+    await tx.insert(ciclosPauta).values({
+      pautaId: pauta.id,
+      ...hitosDe(pauta, base, porcentajesDe(pauta, generales)),
+      variante: await varianteNueva(tx, pauta.id, { variante: ciclo.variante, ejecutada: true }),
+    });
     // Las cartillas menores incluidas quedan ejecutadas con esta y parten de nuevo desde el mismo punto.
     const incluidos = await tx
       .select({ ciclo: ciclosPauta, pauta: pautas })
@@ -772,7 +826,11 @@ export async function finalizarCiclo(
           observaciones: `Incluida en «${pauta.nombre}».`,
         })
         .where(eq(ciclosPauta.id, menor.ciclo.id));
-      await tx.insert(ciclosPauta).values({ pautaId: menor.pauta.id, ...hitosDe(menor.pauta, base, porcentajesDe(menor.pauta, generales)) });
+      await tx.insert(ciclosPauta).values({
+        pautaId: menor.pauta.id,
+        ...hitosDe(menor.pauta, base, porcentajesDe(menor.pauta, generales)),
+        variante: await varianteNueva(tx, menor.pauta.id, { variante: menor.ciclo.variante, ejecutada: true }),
+      });
     }
     await notificar(
       tx,

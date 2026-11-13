@@ -79,7 +79,7 @@ describe.skipIf(!url)("compras (integración)", () => {
     await guardarCentro(db, compras, { codigo: "CC-210", nombre: "Prensas" });
     cuenta = (await db.select().from(schema.cuentasContables))[0].id;
     centro = (await db.select().from(schema.centrosCosto))[0].id;
-    rod = await crearRepuesto(db, bodeguero, { codigo: "ROD-6204", descripcion: "Rodamiento 6204", stockMinimo: 4, stockMaximo: 12 });
+    rod = await crearRepuesto(db, bodeguero, { codigo: "ROD-6204", descripcion: "Rodamiento 6204", stockMinimo: 4, stockMaximo: 12, sinCodigoFabricante: true });
   });
 
   const avisos = async (usuarioId: number) =>

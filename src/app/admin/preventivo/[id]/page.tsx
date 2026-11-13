@@ -83,6 +83,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
               {esGiros && <Dato etiqueta="Contador actual">{n(p.giros)} {p.unidad}</Dato>}
               {p.ciclo.liberadoEn && <Dato etiqueta="Liberada el">{fechaHora(p.ciclo.liberadoEn)}</Dato>}
               {p.ciclo.responsable && <Dato etiqueta="La ejecuta">{p.ciclo.responsable}</Dato>}
+              {p.ciclo.variante && <Dato etiqueta="Vuelta que toca">{p.ciclo.variante}</Dato>}
             </div>
             {p.incluidaEn ? (
               <Link href={`/pauta/${p.incluidaEn.cicloId}`} className="text-marca underline">
@@ -114,7 +115,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
             {actividades.map((a, i) => (
               <li key={a.id} className="flex items-center justify-between gap-2 border-t border-slate-200 pt-1">
                 <span>
-                  {i + 1}. {a.codigo ? `${a.codigo} · ` : ""}
+                  {i + 1}. {a.variante && <Chip tono="gris">Solo vuelta {a.variante}</Chip>} {a.codigo ? `${a.codigo} · ` : ""}
                   <span className="whitespace-pre-line">{a.descripcion}</span>{" "}
                   <span className="text-sm text-slate-600">
                     ·{" "}
@@ -150,6 +151,11 @@ export default async function DetallePauta({ params, searchParams }: Props) {
                   </option>
                 ))}
             </select>
+            <select name="variante" aria-label="En qué vuelta va" defaultValue="" className={`${campo} max-w-48`}>
+              <option value="">En todas las vueltas</option>
+              <option value="A">Solo vuelta A</option>
+              <option value="B">Solo vuelta B</option>
+            </select>
             <button type="submit" className={botonPrimario}>
               Agregar actividad
             </button>
@@ -157,6 +163,11 @@ export default async function DetallePauta({ params, searchParams }: Props) {
           <p className="text-sm text-slate-600">
             Una sola cartilla reúne las actividades de todos: al liberarse, cada grupo ve y marca solo las suyas, y la
             cartilla se finaliza cuando todos terminan. Los cambios valen desde la próxima liberación.
+          </p>
+          <p className="text-sm text-slate-600">
+            Si la detención no alcanza para toda la cartilla, se divide en dos vueltas: una vez se hacen las tareas A y
+            a la siguiente las B. Las tareas «en todas las vueltas» se hacen siempre. Si una vuelta queda incumplida,
+            se repite la misma.
           </p>
         </section>
 
@@ -222,6 +233,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
                 <tr>
                   <th className="p-2 font-semibold">Base</th>
                   <th className="p-2 font-semibold">Objetivo</th>
+                  <th className="p-2 font-semibold">Vuelta</th>
                   <th className="p-2 font-semibold">Estado</th>
                   <th className="p-2 font-semibold">Cerrada</th>
                   <th className="p-2 font-semibold">Ejecutó</th>
@@ -233,6 +245,7 @@ export default async function DetallePauta({ params, searchParams }: Props) {
                   <tr key={c.id} className="border-t border-slate-200">
                     <td className="p-2">{esGiros ? n(c.baseGiros) : fechaCorta(c.baseFecha)}</td>
                     <td className="p-2">{esGiros ? n(c.objetivoGiros) : fechaCorta(c.objetivoFecha)}</td>
+                    <td className="p-2">{c.variante ?? "—"}</td>
                     <td className="p-2">
                       <Chip tono={ESTADO[c.estado].tono}>{ESTADO[c.estado].nombre}</Chip>
                     </td>

@@ -4,7 +4,7 @@ import { Encabezado } from "@/componentes/encabezado";
 import { AvisoError, botonPrimario, campo, Chip, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
 import { activos, codigosFallaMetrics, eventosIntegracion } from "@/db/schema";
-import { nombreCategoria } from "@/lib/categorias";
+import { nombreBd } from "@/lib/categorias";
 import { exigirPerfil } from "@/lib/dal";
 import { CATEGORIAS_METRICS } from "@/lib/metrics-core";
 import { fechaHora } from "@/lib/tiempo";
@@ -41,10 +41,13 @@ export default async function IntegracionMetrics({ searchParams }: { searchParam
         )}
 
         <section className={`${tarjeta} flex flex-col gap-3`}>
-          <h2 className="text-lg font-bold">Códigos de falla que generan solicitud · {codigos.filter((c) => c.activo).length}</h2>
+          <h2 className="text-lg font-bold">Códigos de Breakdown Downtime que generan solicitud · {codigos.filter((c) => c.activo).length}</h2>
           <p className="text-slate-700">
-            Solo las detenciones con uno de estos códigos crean una solicitud de atención. Cualquier otro código,
-            incluida «Parada No Informada», se ignora.
+            Aquí se asignan los códigos de Metrics que corresponden a Breakdown Downtime (BD): fallas reales del
+            equipo. Solo las detenciones con uno de estos códigos crean una solicitud de atención, y solo ellas
+            entran al MTTR y al MTBF. Cualquier otro Delay (ajustes operacionales, esperas de material, planchas,
+            pruebas o aprobaciones, «Parada No Informada») se ignora. Usa «BD General» para la falla que el
+            operador no sabe clasificar: la ven mecánicos y eléctricos, y el técnico indica el origen real al cerrar.
           </p>
           <form action={accionGuardarCodigo} className="grid gap-2 sm:grid-cols-[1fr_2fr_1fr_auto] sm:items-end">
             <label className="flex flex-col gap-1 text-sm font-semibold">
@@ -56,11 +59,11 @@ export default async function IntegracionMetrics({ searchParams }: { searchParam
               <input name="descripcion" className={campo} />
             </label>
             <label className="flex flex-col gap-1 text-sm font-semibold">
-              Categoría
+              Tipo de BD
               <select name="categoria" required className={campo}>
                 {CATEGORIAS_METRICS.map((c) => (
                   <option key={c} value={c}>
-                    {nombreCategoria(c)}
+                    {nombreBd(c)}
                   </option>
                 ))}
               </select>
@@ -77,7 +80,7 @@ export default async function IntegracionMetrics({ searchParams }: { searchParam
                   <tr>
                     <th className="p-2 font-semibold">Código</th>
                     <th className="p-2 font-semibold">Descripción</th>
-                    <th className="p-2 font-semibold">Categoría</th>
+                    <th className="p-2 font-semibold">Tipo de BD</th>
                     <th className="p-2 font-semibold">Estado</th>
                   </tr>
                 </thead>
@@ -86,7 +89,7 @@ export default async function IntegracionMetrics({ searchParams }: { searchParam
                     <tr key={c.codigo} className="border-t border-slate-200">
                       <td className="p-2 font-semibold">{c.codigo}</td>
                       <td className="p-2">{c.descripcion ?? "—"}</td>
-                      <td className="p-2">{nombreCategoria(c.categoria)}</td>
+                      <td className="p-2">{nombreBd(c.categoria)}</td>
                       <td className="p-2">
                         {c.activo ? (
                           <form action={accionDesactivarCodigo}>

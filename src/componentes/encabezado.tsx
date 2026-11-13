@@ -11,6 +11,7 @@ const MENU_ADMIN = [
   { href: "/admin/ot", nombre: "Órdenes de trabajo" },
   { href: "/admin/preventivo", nombre: "Preventivo" },
   { href: "/admin/indicadores", nombre: "Indicadores" },
+  { href: "/soluciones", nombre: "Soluciones" },
   { href: "/bodega", nombre: "Bodega" },
   { href: "/compras", nombre: "Compras" },
   { href: "/admin/activos", nombre: "Activos" },
