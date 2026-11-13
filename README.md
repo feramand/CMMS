@@ -50,7 +50,11 @@ costo, cotización adjunta, dos autorizaciones obligatorias (jefe de mantenimien
 producción) y una opcional (gerente general), impresión con el formato de la empresa, recepción
 parcial o total y Excel de movimientos valorizados para contabilidad.
 
-**Indicadores y reportes.** Por período: tiempo detenido por falla, MTTR, tiempo de respuesta y
+**Detenciones.** Print Garage solo recibe de Metrics los códigos de Breakdown Downtime (BD): BD
+Mecánico, BD Eléctrico, BD SAC y BD General (la falla sin clasificar). Los demás Delay (ajustes
+operacionales, esperas) se ignoran. El MTTR y el MTBF se calculan solo sobre BD.
+
+**Indicadores y reportes.** Por período: Breakdown Downtime por máquina y por tipo, MTTR, tiempo de respuesta y
 de reparación, MTBF por máquina, cumplimiento del preventivo (a tiempo, con atraso, incumplidas),
 solicitudes resueltas sin orden de trabajo, fallas recurrentes y trabajo por técnico en orden
 alfabético, sin ranking. Todo se descarga en Excel. La base de soluciones reúne lo que se hizo

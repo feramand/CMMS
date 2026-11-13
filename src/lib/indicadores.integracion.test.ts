@@ -61,6 +61,8 @@ describe.skipIf(!url)("indicadores (integración)", () => {
         { ...comun, activoId: b, categoria: "MECANICA", creadaEn: t("10-31T22:00"), tomadaEn: t("10-31T22:30"), cerradaEn: t("11-01T02:00"), estado: "SOLUCIONADA", responsableId: marco.id, solucion: "Reapriete" },
         // F5: sin máquina detenida: no cuenta como detención, sí como solicitud resuelta.
         { ...comun, maquinaDetenida: false, activoId: b, categoria: "MECANICA", creadaEn: t("11-05T10:00"), tomadaEn: t("11-05T10:05"), cerradaEn: t("11-05T10:20"), estado: "SOLUCIONADA", sectorId: sistemas[1].id, responsableId: marco.id, solucion: "Ajuste" },
+        // F7: servicios generales con la máquina detenida: no es Breakdown Downtime, sí es una solicitud resuelta.
+        { ...comun, activoId: b, categoria: "SERVICIOS_GENERALES", creadaEn: t("11-07T10:00"), tomadaEn: t("11-07T10:10"), cerradaEn: t("11-07T12:00"), estado: "SOLUCIONADA", responsableId: marco.id, solucion: "Reposición de aire comprimido" },
         // F6: anulada: no cuenta en nada.
         { ...comun, activoId: b, categoria: "MECANICA", creadaEn: t("11-06T10:00"), cerradaEn: t("11-06T10:01"), estado: "ANULADA" },
       ])
@@ -113,12 +115,20 @@ describe.skipIf(!url)("indicadores (integración)", () => {
         resueltas: 1, mttr: 240, respuesta: 30, reparacion: 210,
       },
     ]);
-    expect(i.detencion).toEqual({ minutos: 15_600, fallas: 4, abiertas: 1, resueltas: 3, mttr: 140, respuesta: 23, reparacion: 115 });
+    expect(i.detencion).toEqual({
+      minutos: 15_600, fallas: 4, abiertas: 1, resueltas: 3, mttr: 140, respuesta: 23, reparacion: 115,
+      porTipo: [
+        { categoria: "MECANICA", nombre: "BD Mecánico", fallas: 2, minutos: 180 }, // 60 + 120
+        { categoria: "ELECTRICA", nombre: "BD Eléctrico", fallas: 1, minutos: 120 },
+        { categoria: "SAC", nombre: "BD SAC", fallas: 0, minutos: 0 },
+        { categoria: "INDETERMINADA", nombre: "BD General", fallas: 1, minutos: 15_300 },
+      ],
+    });
     expect(i.detalle.map((f) => f.minutos)).toEqual([15_300, 120, 120, 60]);
 
     expect(i.atencion).toEqual({
-      creadas: 4, resueltas: 4, sinOt: 3, conOt: 1, pctSinOt: 75,
-      porCategoria: [{ categoria: "MECANICA", cantidad: 2 }, { categoria: "ELECTRICA", cantidad: 1 }, { categoria: "INDETERMINADA", cantidad: 1 }],
+      creadas: 5, resueltas: 5, sinOt: 4, conOt: 1, pctSinOt: 80,
+      porCategoria: [{ categoria: "MECANICA", cantidad: 2 }, { categoria: "ELECTRICA", cantidad: 1 }, { categoria: "INDETERMINADA", cantidad: 1 }, { categoria: "SERVICIOS_GENERALES", cantidad: 1 }],
     });
     expect(i.recurrentes).toEqual([{ activoId: a, sectorId: s1, veces: 3, activo: "Heidelberg XL106", sistema: "Marcador" }]);
 
@@ -138,7 +148,7 @@ describe.skipIf(!url)("indicadores (integración)", () => {
     // En orden alfabético, sin posiciones.
     expect(i.porTecnico.map((x) => ({ ...x, usuarioId: undefined }))).toEqual([
       { usuarioId: undefined, nombre: "Ana Díaz", solicitudes: 0, ordenes: 1, apoyos: 0, pautas: 1, actividades: 0 },
-      { usuarioId: undefined, nombre: "Marco Soto", solicitudes: 3, ordenes: 0, apoyos: 1, pautas: 2, actividades: 2 },
+      { usuarioId: undefined, nombre: "Marco Soto", solicitudes: 4, ordenes: 0, apoyos: 1, pautas: 2, actividades: 2 },
     ]);
   });
 

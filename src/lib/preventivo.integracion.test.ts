@@ -513,7 +513,13 @@ it("carga las cartillas de una máquina desde su planilla, con la ficha completa
       expect(claveValida("corta", "secreta-123")).toBe(false);
       expect(claveValida(null, "secreta-123")).toBe(false);
       expect(claveValida("x", undefined)).toBe(false);
-      await expect(guardarCodigo(db, jefe, { codigo: "X1", categoria: "Servicios generales" })).rejects.toThrow("no es una categoría válida");
+      await expect(guardarCodigo(db, jefe, { codigo: "X1", categoria: "Servicios generales" })).rejects.toThrow("no es un tipo válido");
+      // Los códigos se asignan por tipo de Breakdown Downtime; «BD General» es la falla sin clasificar.
+      for (const [codigo, tipo] of [["BD1", "BD Mecánico"], ["BD2", "bd eléctrico"], ["BD3", "BD SAC"], ["BD4", "BD General"]]) {
+        await guardarCodigo(db, jefe, { codigo, categoria: tipo });
+      }
+      const tipos = await db.select().from(schema.codigosFallaMetrics);
+      expect(["BD1", "BD2", "BD3", "BD4"].map((c) => tipos.find((x) => x.codigo === c)?.categoria)).toEqual(["MECANICA", "ELECTRICA", "SAC", "INDETERMINADA"]);
       await expect(guardarCodigo(db, mec, { codigo: "X1", categoria: "SAC" })).rejects.toThrow("Solo jefe");
     });
   });

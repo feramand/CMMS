@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import { db } from "@/db";
-import { nombreCategoria } from "@/lib/categorias";
+import { nombreBd, nombreCategoria } from "@/lib/categorias";
 import { informe, periodoPedido } from "@/lib/indicadores-core";
 import { usuarioActual } from "@/lib/dal";
 import { fechaHora } from "@/lib/tiempo";
@@ -30,11 +30,12 @@ export async function GET(request: Request) {
   hoja(libro, "Resumen", [["Indicador", 46], ["Valor", 16], ["Unidad", 12]], [
     ["Período desde", desde, ""],
     ["Período hasta", hasta, ""],
-    ["Tiempo detenido por fallas (suma de máquinas)", i.detencion.minutos, "minutos"],
-    ["Fallas con detención", i.detencion.fallas, ""],
-    ["Fallas con detención aún abiertas", i.detencion.abiertas, ""],
-    ["Fallas con detención resueltas en el período", i.detencion.resueltas, ""],
-    ["MTTR (detención → solución)", i.detencion.mttr, "minutos"],
+    ["Breakdown Downtime (suma de máquinas)", i.detencion.minutos, "minutos"],
+    ...i.detencion.porTipo.flatMap((t): Celda[][] => [[`${t.nombre} · tiempo`, t.minutos, "minutos"], [`${t.nombre} · fallas`, t.fallas, ""]]),
+    ["Fallas BD", i.detencion.fallas, ""],
+    ["Fallas BD aún abiertas", i.detencion.abiertas, ""],
+    ["Fallas BD resueltas en el período", i.detencion.resueltas, ""],
+    ["MTTR (sobre BD: detención → solución)", i.detencion.mttr, "minutos"],
     ["Tiempo de respuesta promedio", i.detencion.respuesta, "minutos"],
     ["Tiempo de reparación promedio", i.detencion.reparacion, "minutos"],
     ["Solicitudes creadas", i.atencion.creadas, ""],
@@ -56,15 +57,15 @@ export async function GET(request: Request) {
   hoja(
     libro,
     "Por máquina",
-    [["Máquina", 28], ["Planta", 16], ["Fallas con detención", 18], ["Iniciadas en el período", 20], ["Abiertas", 10], ["Minutos detenida", 16], ["% del período", 13], ["Resueltas", 10], ["MTTR (min)", 12], ["Respuesta (min)", 15], ["Reparación (min)", 16], ["MTBF (min)", 12]],
+    [["Máquina", 28], ["Planta", 16], ["Fallas BD", 12], ["Iniciadas en el período", 20], ["Abiertas", 10], ["BD (min)", 12], ["% del período", 13], ["Resueltas", 10], ["MTTR (min)", 12], ["Respuesta (min)", 15], ["Reparación (min)", 16], ["MTBF (min)", 12]],
     i.maquinas.map((m) => [m.activo, m.planta, m.fallas, m.iniciadas, m.abiertas, m.minutosDetenida, m.pctDetenida, m.resueltas, m.mttr, m.respuesta, m.reparacion, m.mtbf]),
   );
 
   hoja(
     libro,
-    "Fallas",
-    [["Solicitud", 10], ["Máquina", 28], ["Sistema", 22], ["Tipo de falla", 20], ["Detenida desde", 18], ["Tomada", 18], ["Resuelta", 18], ["Con OT", 8], ["Minutos en el período", 20]],
-    i.detalle.map((f) => [f.id, f.activo, f.sistema, nombreCategoria(f.categoria), fechaHora(f.desde), f.tomadaEn ? fechaHora(f.tomadaEn) : "", f.hasta ? fechaHora(f.hasta) : "Abierta", f.conOt ? "Sí" : "No", f.minutos]),
+    "Fallas BD",
+    [["Solicitud", 10], ["Máquina", 28], ["Sistema", 22], ["Tipo de BD", 16], ["Detenida desde", 18], ["Tomada", 18], ["Resuelta", 18], ["Con OT", 8], ["Minutos en el período", 20]],
+    i.detalle.map((f) => [f.id, f.activo, f.sistema, nombreBd(f.categoria), fechaHora(f.desde), f.tomadaEn ? fechaHora(f.tomadaEn) : "", f.hasta ? fechaHora(f.hasta) : "Abierta", f.conOt ? "Sí" : "No", f.minutos]),
   );
 
   hoja(

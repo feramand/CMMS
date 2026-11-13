@@ -15,6 +15,7 @@ import {
   usuarios,
   type Categoria,
 } from "@/db/schema";
+import { TIPOS_BD } from "./categorias";
 import { downtimePorMaquina, porcentajeDetenida } from "./downtime";
 import {
   cumplimiento,
@@ -46,7 +47,7 @@ export type FilaMaquina = Tiempos & {
   activoId: number;
   activo: string;
   planta: string;
-  /** Fallas con detención que tocan el período. */
+  /** Fallas BD (Breakdown Downtime) que tocan el período. */
   fallas: number;
   /** De ellas, las que empezaron dentro del período (base del MTBF). */
   iniciadas: number;
@@ -102,7 +103,7 @@ export async function informe(db: DB, desde: string, hasta: string, ahora = new 
   const minutosPeriodo = Math.max(0, minutosEntre(inicio, tope) ?? 0);
   const empieza = sql<Date>`coalesce(${solicitudes.detenidaEn}, ${solicitudes.creadaEn})`;
 
-  // ---------- Fallas con detención: downtime, MTTR, MTBF ----------
+  // ---------- Breakdown Downtime (BD): tiempo detenido, MTTR, MTBF ----------
   const crudas = await db
     .select({
       id: solicitudes.id,
@@ -125,6 +126,8 @@ export async function informe(db: DB, desde: string, hasta: string, ahora = new 
     .where(
       and(
         eq(solicitudes.maquinaDetenida, true),
+        // Breakdown Downtime: falla real del equipo. Servicios generales no lo es.
+        inArray(solicitudes.categoria, TIPOS_BD.map((t) => t.valor)),
         ne(solicitudes.estado, "ANULADA"),
         lt(empieza, fin),
         or(isNull(solicitudes.cerradaEn), gt(solicitudes.cerradaEn, inicio)),
@@ -168,7 +171,13 @@ export async function informe(db: DB, desde: string, hasta: string, ahora = new 
       return b > a ? [fila] : [];
     })
     .sort((a, b) => b.minutos - a.minutos);
+  // Por tipo de BD, según el origen real si el técnico lo indicó al cerrar. Suma falla por falla.
+  const porTipo = TIPOS_BD.map((tipo) => {
+    const propias = detalle.filter((f) => f.categoria === tipo.valor);
+    return { categoria: tipo.valor, nombre: tipo.nombre, fallas: propias.length, minutos: propias.reduce((t, f) => t + f.minutos, 0) };
+  });
   const detencion = {
+    porTipo,
     minutos: maquinas.reduce((t, m) => t + m.minutosDetenida, 0),
     fallas: maquinas.reduce((t, m) => t + m.fallas, 0),
     abiertas: maquinas.reduce((t, m) => t + m.abiertas, 0),

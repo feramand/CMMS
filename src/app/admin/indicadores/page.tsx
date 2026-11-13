@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Encabezado } from "@/componentes/encabezado";
 import { botonPrimario, botonSecundario, campo, Chip, Dato, tarjeta } from "@/componentes/ui";
 import { db } from "@/db";
-import { nombreCategoria } from "@/lib/categorias";
+import { nombreBd, nombreCategoria } from "@/lib/categorias";
 import { informe, periodoPedido, UMBRAL_RECURRENTE } from "@/lib/indicadores-core";
 import { exigirPerfil } from "@/lib/dal";
 import { MOTIVOS_NO_REALIZADA } from "@/lib/pautas-core";
@@ -88,9 +88,9 @@ export default async function Indicadores({ searchParams }: { searchParams: Prom
             Resumen · {corta(desde)} al {corta(hasta)}
           </h2>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Dato etiqueta="Tiempo detenido (suma de máquinas)">{duracionLarga(i.detencion.minutos)}</Dato>
-            <Dato etiqueta="Fallas con detención">{i.detencion.fallas}</Dato>
-            <Dato etiqueta="MTTR (detención → solución)">{duracion(i.detencion.mttr)}</Dato>
+            <Dato etiqueta="Breakdown Downtime (suma de máquinas)">{duracionLarga(i.detencion.minutos)}</Dato>
+            <Dato etiqueta="Fallas BD">{i.detencion.fallas}</Dato>
+            <Dato etiqueta="MTTR (sobre BD)">{duracion(i.detencion.mttr)}</Dato>
             <Dato etiqueta="Fallas aún abiertas">{i.detencion.abiertas}</Dato>
             <Dato etiqueta="Tiempo de respuesta promedio">{duracion(i.detencion.respuesta)}</Dato>
             <Dato etiqueta="Tiempo de reparación promedio">{duracion(i.detencion.reparacion)}</Dato>
@@ -100,9 +100,12 @@ export default async function Indicadores({ searchParams }: { searchParams: Prom
         </section>
 
         <section className={`${tarjeta} flex flex-col gap-3`}>
-          <h2 className="text-lg font-bold">Fallas con detención por máquina</h2>
+          <h2 className="text-lg font-bold">Breakdown Downtime (BD) por máquina</h2>
+          <p className="text-slate-700">
+            Por tipo: {i.detencion.porTipo.map((t) => `${t.nombre} ${duracionLarga(t.minutos)} (${t.fallas})`).join(" · ")}
+          </p>
           {i.maquinas.length === 0 ? (
-            <p className="text-slate-600">No hubo detenciones por falla en este período.</p>
+            <p className="text-slate-600">No hubo Breakdown Downtime en este período.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[900px] text-left text-base">
@@ -110,7 +113,7 @@ export default async function Indicadores({ searchParams }: { searchParams: Prom
                   <tr>
                     <th className={th}>Máquina</th>
                     <th className={`${th} text-right`}>Fallas</th>
-                    <th className={`${th} text-right`}>Tiempo detenida</th>
+                    <th className={`${th} text-right`}>BD</th>
                     <th className={`${th} text-right`}>% del período</th>
                     <th className={`${th} text-right`}>MTTR</th>
                     <th className={`${th} text-right`}>Respuesta</th>
@@ -256,14 +259,14 @@ export default async function Indicadores({ searchParams }: { searchParams: Prom
 
         {i.detalle.length > 0 && (
           <section className={`${tarjeta} flex flex-col gap-3`}>
-            <h2 className="text-lg font-bold">Detalle de fallas con detención · {i.detalle.length}</h2>
+            <h2 className="text-lg font-bold">Detalle de fallas BD · {i.detalle.length}</h2>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-left text-base">
                 <thead className="text-sm text-slate-600">
                   <tr>
                     <th className={th}>Detenida desde</th>
                     <th className={th}>Máquina</th>
-                    <th className={th}>Tipo de falla</th>
+                    <th className={th}>Tipo</th>
                     <th className={th}>Resuelta</th>
                     <th className={`${th} text-right`}>En el período</th>
                   </tr>
@@ -280,7 +283,7 @@ export default async function Indicadores({ searchParams }: { searchParams: Prom
                         {f.activo}
                         {f.sistema ? ` · ${f.sistema}` : ""}
                       </td>
-                      <td className="p-2">{nombreCategoria(f.categoria)}</td>
+                      <td className="p-2">{nombreBd(f.categoria)}</td>
                       <td className="p-2">{f.hasta ? fechaHora(f.hasta) : "Abierta"}</td>
                       <td className={`${num} font-semibold`}>{duracion(f.minutos)}</td>
                     </tr>
@@ -295,12 +298,14 @@ export default async function Indicadores({ searchParams }: { searchParams: Prom
         <details className={tarjeta}>
           <summary className="cursor-pointer text-lg font-semibold text-marca">Cómo se calcula cada indicador</summary>
           <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-sm text-slate-700">
-            <li>Falla con detención: solicitud de atención marcada con «máquina detenida», incluidas todas las que llegan de Metrics. Las anuladas no cuentan.</li>
-            <li>Tiempo detenida: desde la hora de detención de Metrics (o del reporte, si se hizo a mano) hasta que la solicitud queda solucionada; si pasó a orden de trabajo, hasta que esa orden se finaliza. Solo cuenta la parte que cae dentro del período; una falla abierta cuenta hasta este momento; dos fallas simultáneas de la misma máquina se cuentan una vez.</li>
+            <li>Breakdown Downtime (BD): falla real del equipo con la máquina detenida. Es una parte de las detenciones no planificadas (Delay); los ajustes operacionales y las esperas no llegan a Print Garage y no cuentan aquí.</li>
+            <li>Cuenta como BD toda solicitud de atención con «máquina detenida» de tipo mecánico, eléctrico, SAC o general: las que dispara Metrics con un código BD y las reportadas a mano. Las de servicios generales y las anuladas no cuentan.</li>
+            <li>El tipo de BD es el origen real que indicó el técnico al cerrar; si no lo indicó, el tipo con que llegó. El desglose por tipo suma falla por falla.</li>
+            <li>Tiempo de BD: desde la hora de detención de Metrics (o del reporte, si se hizo a mano) hasta que la solicitud queda solucionada; si pasó a orden de trabajo, hasta que esa orden se finaliza. Solo cuenta la parte que cae dentro del período; una falla abierta cuenta hasta este momento; dos fallas simultáneas de la misma máquina se cuentan una vez.</li>
             <li>% del período: tiempo detenida sobre el tiempo calendario (24 horas por día), no sobre las horas de producción.</li>
-            <li>MTTR: promedio del tiempo entre la detención y la solución, sobre las fallas resueltas dentro del período, con su duración completa.</li>
+            <li>MTTR: promedio del tiempo entre la detención y la solución, sobre las fallas BD resueltas dentro del período, con su duración completa.</li>
             <li>Respuesta: promedio entre que llega el aviso y un técnico lo toma. Reparación: promedio entre que lo toma y queda resuelto.</li>
-            <li>MTBF: tiempo calendario transcurrido del período menos el tiempo detenida, dividido por las fallas que empezaron en el período. Sin fallas no se calcula.</li>
+            <li>MTBF: tiempo calendario transcurrido del período menos el tiempo detenida, dividido por las fallas BD que empezaron en el período. Sin fallas no se calcula.</li>
             <li>Cumplimiento preventivo: pautas ejecutadas sobre las cerradas en el período (ejecutadas más incumplidas). «A tiempo» es ejecutada antes o justo en el 100 % del intervalo; «con atraso», entre el 100 % y el límite; al pasar el límite queda incumplida.</li>
             <li>Resueltas sin OT: solicitudes solucionadas directamente por el técnico, sobre el total de resueltas en el período.</li>
             <li>Falla recurrente: el mismo sistema de la misma máquina con {UMBRAL_RECURRENTE} o más solicitudes creadas en el período.</li>
