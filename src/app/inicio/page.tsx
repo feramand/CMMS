@@ -169,10 +169,6 @@ async function InicioTecnico({ usuario }: { usuario: UsuarioSesion }) {
       )}
 
       <section className="flex flex-col gap-2">
-        <h2 className={titulo}>Pautas preventivas</h2>
-        <p className="text-slate-600">Disponible en la etapa 2.</p>
-      </section>
-      <section className="flex flex-col gap-2">
         <h2 className={titulo}>Pautas preventivas pendientes · {misPautas.length}</h2>
         {misPautas.length === 0 && <p className="text-slate-600">No hay pautas liberadas.</p>}
         {misPautas.map((p) => (
