@@ -224,19 +224,50 @@ export async function cambiarEstadoOt(
   });
 }
 
+/** Días que el técnico responsable tiene, desde el cierre de la orden, para completar o corregir su informe. */
+export const DIAS_EDICION_INFORME = 7;
+
+/** Hasta cuándo el técnico puede editar el informe de una orden finalizada, o null si la orden no está finalizada. */
+export function limiteEdicionInforme(ot: { estado: EstadoOt; terminoEn: Date | null }): Date | null {
+  if (ot.estado !== "FINALIZADA" || !ot.terminoEn) return null;
+  return new Date(ot.terminoEn.getTime() + DIAS_EDICION_INFORME * 24 * 60 * 60 * 1000);
+}
+
+/**
+ * Quién edita el informe (análisis de causa raíz) de una orden: el jefe, el planificador y el
+ * administrador, siempre; el técnico responsable, mientras la orden está abierta y hasta 7 días
+ * después de finalizarla.
+ */
+export function puedeEditarInforme(
+  actor: UsuarioSesion,
+  ot: { estado: EstadoOt; terminoEn: Date | null; responsableId: number | null },
+  ahora = new Date(),
+): boolean {
+  if (administrativo(actor)) return true;
+  if (actor.perfil !== "TECNICO" || ot.responsableId !== actor.id || ot.estado === "CANCELADA") return false;
+  const limite = limiteEdicionInforme(ot);
+  return limite === null ? ot.estado !== "FINALIZADA" : ahora <= limite;
+}
+
 export async function guardarCausaRaiz(
   db: DB,
   actor: UsuarioSesion,
   otId: number,
   datos: { causa: string; solucion: string; acciones: string; observaciones: string },
+  ahora = new Date(),
 ): Promise<void> {
   const [ot] = await db
-    .select({ responsableId: ordenesTrabajo.responsableId })
+    .select({ responsableId: ordenesTrabajo.responsableId, estado: ordenesTrabajo.estado, terminoEn: ordenesTrabajo.terminoEn })
     .from(ordenesTrabajo)
     .where(eq(ordenesTrabajo.id, otId));
   if (!ot) throw new ErrorDeNegocio("La orden no existe.");
   if (!administrativo(actor) && ot.responsableId !== actor.id) {
     throw new ErrorDeNegocio("No tienes permiso para editar esta orden.");
+  }
+  if (!puedeEditarInforme(actor, ot, ahora)) {
+    throw new ErrorDeNegocio(
+      `Pasaron más de ${DIAS_EDICION_INFORME} días desde el cierre de la orden: desde ahora solo el jefe o el administrador pueden editar el informe.`,
+    );
   }
   await db
     .update(ordenesTrabajo)

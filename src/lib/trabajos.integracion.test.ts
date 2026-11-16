@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { DB } from "@/db";
 import * as schema from "@/db/schema";
 import type { UsuarioSesion } from "./auth-core";
-import { asignarOt, cambiarEstadoOt, crearOt, resolverRepuesto, solicitarRepuesto } from "./ot-core";
+import { asignarOt, cambiarEstadoOt, crearOt, guardarCausaRaiz, limiteEdicionInforme, puedeEditarInforme, resolverRepuesto, solicitarRepuesto } from "./ot-core";
 import {
   asignarSolicitud,
   cerrarSolicitud,
@@ -346,6 +346,31 @@ describe.skipIf(!url)("solicitudes y órdenes de trabajo (integración)", () => 
     await expect(solicitarRepuesto(db, mec1, { otId: ot, cantidad: 1.5, descripcion: "x" })).rejects.toThrow("cantidad");
     await expect(solicitarRepuesto(db, mec1, { cantidad: 1, descripcion: "x" })).rejects.toThrow("orden de trabajo o una pauta");
     await expect(solicitarRepuesto(db, operador, { otId: ot, cantidad: 1, descripcion: "x" })).rejects.toThrow(ErrorDeNegocio);
+  });
+
+  it("informe de la OT: el técnico responsable lo edita hasta 7 días después del cierre; luego solo jefe y administrador", async () => {
+    const id = (await crearOt(db, jefe, { ...otBase(), responsableId: mec1.id })).id;
+    const informe = (causa: string) => ({ causa, solucion: "Cambio de rodamiento", acciones: "", observaciones: "" });
+    const fila = async () => (await db.select().from(schema.ordenesTrabajo).where(eq(schema.ordenesTrabajo.id, id)))[0];
+    // Con la orden abierta: el responsable sí, otro técnico no.
+    await guardarCausaRaiz(db, mec1, id, informe("Desgaste"));
+    await expect(guardarCausaRaiz(db, mec2, id, informe("x"))).rejects.toThrow("No tienes permiso");
+    await cambiarEstadoOt(db, mec1, id, "EN_CURSO");
+    await cambiarEstadoOt(db, mec1, id, "FINALIZADA");
+    const termino = (await fila()).terminoEn!;
+    const dias = (n: number) => new Date(termino.getTime() + n * 24 * 60 * 60 * 1000);
+    expect(limiteEdicionInforme(await fila())).toEqual(dias(7));
+    // Día 6 y el instante exacto del día 7: todavía puede.
+    await guardarCausaRaiz(db, mec1, id, informe("Desgaste por falta de lubricación"), dias(6));
+    await guardarCausaRaiz(db, mec1, id, informe("Desgaste por falta de lubricación."), dias(7));
+    expect((await fila()).rcaCausa).toBe("Desgaste por falta de lubricación.");
+    // Pasado el plazo: el técnico ya no; el jefe sí.
+    const tarde = new Date(dias(7).getTime() + 1000);
+    await expect(guardarCausaRaiz(db, mec1, id, informe("Otra"), tarde)).rejects.toThrow("Pasaron más de 7 días desde el cierre");
+    expect(puedeEditarInforme(mec1, await fila(), tarde)).toBe(false);
+    expect(puedeEditarInforme(jefe, await fila(), tarde)).toBe(true);
+    await guardarCausaRaiz(db, jefe, id, informe("Corregido por jefatura"), dias(30));
+    expect(await fila()).toMatchObject({ rcaCausa: "Corregido por jefatura", rcaSolucion: "Cambio de rodamiento", rcaAcciones: null });
   });
 
   it("bodega entrega o rechaza una sola vez y avisa al solicitante", async () => {
