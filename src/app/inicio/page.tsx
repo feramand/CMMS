@@ -124,7 +124,12 @@ async function InicioTecnico({ usuario }: { usuario: UsuarioSesion }) {
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className={titulo}>Mis trabajos · {misSat.length + misOt.length}</h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className={titulo}>Mis trabajos · {misSat.length + misOt.length}</h2>
+          <Link href="/mis-ot" className="text-marca underline">
+            Todas mis órdenes de trabajo e informes
+          </Link>
+        </div>
         {misSat.length + misOt.length === 0 && <p className="text-slate-600">No tienes trabajos abiertos.</p>}
         {misSat.map((s) => (
           <Link key={`s${s.id}`} href={`/sat/${s.id}`} className={`${tarjeta} flex items-center justify-between gap-2`}>
@@ -168,10 +173,6 @@ async function InicioTecnico({ usuario }: { usuario: UsuarioSesion }) {
         </section>
       )}
 
-      <section className="flex flex-col gap-2">
-        <h2 className={titulo}>Pautas preventivas</h2>
-        <p className="text-slate-600">Disponible en la etapa 2.</p>
-      </section>
       <section className="flex flex-col gap-2">
         <h2 className={titulo}>Pautas preventivas pendientes · {misPautas.length}</h2>
         {misPautas.length === 0 && <p className="text-slate-600">No hay pautas liberadas.</p>}

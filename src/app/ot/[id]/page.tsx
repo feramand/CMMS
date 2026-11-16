@@ -12,7 +12,7 @@ import { listarOts, listarTecnicos } from "@/lib/consultas";
 import { consumoDeOt } from "@/lib/consultas-bodega";
 import { exigirSesion } from "@/lib/dal";
 import { cant, pesos } from "@/lib/formato";
-import { estadosSiguientes, nombreEstadoOt } from "@/lib/ot-core";
+import { DIAS_EDICION_INFORME, estadosSiguientes, limiteEdicionInforme, nombreEstadoOt, puedeEditarInforme } from "@/lib/ot-core";
 import { rutaInicio } from "@/lib/perfiles";
 import { duracion, fechaHora, minutosEntre } from "@/lib/tiempo";
 
@@ -44,6 +44,8 @@ export default async function FichaOt({ params, searchParams }: Props) {
   const admin = usuario.perfil !== "TECNICO";
   const puedeOperar = admin || ot.responsableId === usuario.id;
   const abierta = ot.estado !== "FINALIZADA" && ot.estado !== "CANCELADA";
+  const editaInforme = puedeEditarInforme(usuario, ot);
+  const limiteInforme = limiteEdicionInforme(ot);
   const [repuestos, listaApoyos, [origen], tecnicos, consumo] = await Promise.all([
     db.select().from(solicitudesRepuesto).where(eq(solicitudesRepuesto.otId, id)),
     db
@@ -74,9 +76,14 @@ export default async function FichaOt({ params, searchParams }: Props) {
             <h1 className="text-2xl font-bold">OT {ot.folio}</h1>
             <ChipOt estado={ot.estado} />
           </div>
-          <Link href={admin ? "/admin/ot" : "/inicio"} className="text-marca underline">
-            Volver
-          </Link>
+          <div className="flex flex-wrap items-center gap-4">
+            <Link href={`/ot/${ot.id}/informe`} className={botonSecundario}>
+              Informe para imprimir
+            </Link>
+            <Link href={admin ? "/admin/ot" : "/mis-ot"} className="text-marca underline">
+              Volver
+            </Link>
+          </div>
         </div>
         <AvisoError mensaje={error} />
         {aviso === "repuesto" && (
@@ -270,15 +277,22 @@ export default async function FichaOt({ params, searchParams }: Props) {
                   name={nombre}
                   rows={2}
                   defaultValue={valor ?? ""}
-                  readOnly={!puedeOperar}
+                  readOnly={!editaInforme}
                   className="rounded-lg border border-slate-400 bg-white p-2 text-base font-normal"
                 />
               </label>
             ))}
-            {puedeOperar && (
+            {editaInforme && (
               <button type="submit" className={`${botonSecundario} sm:col-span-2`}>
                 Guardar análisis
               </button>
+            )}
+            {!admin && limiteInforme && (
+              <p className="text-sm text-slate-600 sm:col-span-2">
+                {editaInforme
+                  ? `Puedes completar o corregir este informe hasta el ${fechaHora(limiteInforme)} (${DIAS_EDICION_INFORME} días desde el cierre). Después solo lo edita el jefe o el administrador.`
+                  : `Pasaron más de ${DIAS_EDICION_INFORME} días desde el cierre: el informe ya solo lo edita el jefe o el administrador.`}
+              </p>
             )}
           </form>
         </section>
